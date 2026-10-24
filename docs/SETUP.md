@@ -36,6 +36,15 @@ Safeguards: one number per customer, double clicks can't buy two, and only ordin
 2. In your Google Ads manager account: Tools > Bulk actions > Scripts > New script. Paste `docs/google-ads-script.js`, set `PORTAL_URL` and `PUSH_KEY`, authorise, Preview, then schedule it.
 3. The result log shows `saved`, `unknown_account` and `rejected` counts.
 
+## Automatic Facebook results, report drafts and alerts
+These run on their own once the settings below exist.
+- **Facebook sync** runs every morning (05:30 UTC) and pulls the last 7 days for every client with a Meta ad account id. It needs `META_ACCESS_TOKEN`, a system-user token from your Meta Business Manager (Business settings > Users > System users > add one > assign each client's ad account with "View performance" > Generate token with `ads_read`). Clients share their ad account with your Business as a partner; the portal's Ads tab walks them through it. Facebook may require app review for `ads_read` on partner accounts; the sync reports a clear error per client until access is granted.
+- **Weekly report drafts** are created every Monday at 06:00 UTC for the previous Monday to Sunday, unpublished. Admin shows them under each client; add notes and press Publish.
+- **Needs attention** in Admin lists clients with no enquiries for 3 days, failed syncs, silent Google feeds, failed calls, drafts waiting and missing details.
+- Admin has "Run now" buttons for the Facebook sync and the report drafts, for testing.
+- Optional settings that show the client the right ids in their Connect guide: `GOOGLE_MCC_ID` (your Google Ads manager account id) and `META_BUSINESS_ID` (your Meta Business id).
+- Enquiry sources: ad links ending `?utm_source=google&utm_campaign=boilers` are remembered and attached to the enquiry, so reports can show where each one came from.
+
 ## 5. Facebook and Instagram results
 Facebook has no equivalent of the Google script. Options:
 - Use a connector tool (for example Windsor.ai or Supermetrics) that can send a daily webhook or sheet export, mapped to the same JSON as above with `platform: "meta"` and `meta_ad_account_id`.

@@ -15,6 +15,7 @@ const state = {
   tab: "overview",
   viewAs: null, // admin only: client id being viewed
   adminClients: null,
+  attention: null,
   adminDetail: null, // { client, users, steps }
   flash: null, // { type: "ok" | "err", text }
   setpw: null, // { kind: "invite" | "recovery", token }
@@ -233,7 +234,7 @@ function viewWebsite() {
         <div><h3>${esc(st.title)}</h3><p>${esc(st.detail || "")}</p></div>
         <span class="chip ${esc(st.status)}">${{ todo: "To do", doing: "In progress", done: "Done" }[st.status] || ""}</span>
       </li>`).join("")}
-    </ol></div>`;
+    </ol></div>` + intakePanel();
 }
 
 const STATUS_LABEL = { new: "New", qualified: "Good enquiry", customer: "Became a customer", spam: "Not a real enquiry" };
@@ -321,6 +322,52 @@ function viewCalls() {
     </div>`;
 }
 
+const CONN_CHIP = { none: "todo", waiting: "doing", live: "done", error: "doing" };
+
+function connectPanel() {
+  const d = state.data;
+  const c = d.connections;
+  const ag = d.agency || {};
+  const row = (name, st) => `<li><b>${name}</b> <span class="chip ${CONN_CHIP[st.state]}">${esc(st.text)}</span></li>`;
+  const missing = !d.client.google_customer_id || !d.client.meta_ad_account_id;
+  return `<div class="panel"><h2>Connect your ad accounts</h2>
+    <p class="muted small">Two quick invites and your results flow in automatically. You stay in control and can remove our access any time.</p>
+    <ul class="checks">${row("Google Ads", c.google)}${row("Facebook and Instagram", c.meta)}</ul>
+    ${missing ? `<ol class="steps small">
+      <li class="step"><span class="dot" aria-hidden="true">1</span><div><h3>Google Ads</h3>
+        <p>In Google Ads, open Admin, then Access and security, then Managers, and accept the link request from Alpha Analytica${ag.google_manager_id ? ` (manager id ${esc(ag.google_manager_id)})` : ""}. Then enter your 10-digit customer id below.</p></div></li>
+      <li class="step"><span class="dot" aria-hidden="true">2</span><div><h3>Facebook and Instagram</h3>
+        <p>In Meta Business Settings, open Partners, add a partner${ag.meta_business_id ? ` using our Business id ${esc(ag.meta_business_id)}` : ""}, and share your ad account with us. Then enter your ad account id below.</p></div></li>
+    </ol>
+    <form class="form" data-form="own-accounts">
+      ${d.client.google_customer_id ? "" : `<div class="field"><label for="og">Google Ads customer id</label><input id="og" name="google_customer_id" placeholder="123-456-7890" maxlength="30"></div>`}
+      ${d.client.meta_ad_account_id ? "" : `<div class="field"><label for="om">Facebook ad account id</label><input id="om" name="meta_ad_account_id" placeholder="1234567890" maxlength="30"></div>`}
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>` : ""}
+  </div>`;
+}
+
+const INTAKE_LABELS = [
+  ["legal_name", "Legal business name", "input"], ["address", "Business address", "input"],
+  ["services", "Services you offer, with prices", "textarea"], ["area", "Area you cover", "input"],
+  ["hours", "Opening hours", "input"], ["monthly_budget", "Monthly ad budget (£)", "input"],
+  ["approver_name", "Who approves the website and ads?", "input"], ["domain", "Your website address, if you have one", "input"],
+  ["facebook_page", "Your Facebook page link", "input"], ["google_ads", "Do you already have a Google Ads account? (yes / no)", "input"],
+  ["notes", "Anything else we should know?", "textarea"],
+];
+
+function intakePanel() {
+  const v = state.data.client.intake || {};
+  return `<div class="panel"><h2>Your business details</h2>
+    <p class="muted small">Fill this in once and we'll have everything we need to build your site and ads.</p>
+    <form class="form" data-form="intake">
+      ${INTAKE_LABELS.map(([k, label, kind], i) => `<div class="field"><label for="in${i}">${label}</label>${kind === "textarea"
+        ? `<textarea id="in${i}" name="${k}" maxlength="1500">${esc(v[k] || "")}</textarea>`
+        : `<input id="in${i}" name="${k}" maxlength="300" value="${esc(v[k] || "")}">`}</div>`).join("")}
+      <button class="btn btn-primary" type="submit">Save details</button>
+    </form></div>`;
+}
+
 function viewAds() {
   const d = state.data;
   const names = { google: "Google", meta: "Facebook and Instagram" };
@@ -340,7 +387,7 @@ function viewAds() {
         ? `<div class="tablewrap"><table><thead><tr><th>Platform</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Enquiries</th><th class="num">Cost per enquiry</th></tr></thead><tbody>${rows}</tbody></table></div>
            <p class="muted small mt">Numbers are updated automatically where your ad account is connected, otherwise by Alpha Analytica each week.</p>`
         : `<p class="muted">Your ad results will appear here once your campaigns are live.</p>`}
-    </div>`;
+    </div>` + connectPanel();
 }
 
 function viewReports() {
@@ -365,7 +412,16 @@ function viewReports() {
 function viewAdmin() {
   if (state.adminDetail) return viewAdminClient();
   const list = state.adminClients;
+  const att = state.attention;
   return `<div class="pagehead"><h1>Admin</h1><p>Your clients, their progress and their results.</p></div>
+    <div class="panel"><h2>Needs attention</h2>
+      ${att === null ? `<p class="muted">Checking…</p>` : att.length
+        ? `<ul class="checks">${att.map((a) => `<li><span class="chip ${a.level === "bad" ? "doing" : "todo"}">${a.level === "bad" ? "Problem" : "Check"}</span> <b>${esc(a.client)}</b>: ${esc(a.message)}
+            <button class="btn btn-ghost btn-small" data-action="admin-open" data-id="${a.client_id}" type="button">Open</button></li>`).join("")}</ul>`
+        : `<p class="muted">Nothing needs your attention.</p>`}
+      <p class="mt"><button class="btn btn-ghost btn-small" data-action="run-job" data-job="meta-sync" type="button">Sync Facebook results now</button>
+        <button class="btn btn-ghost btn-small" data-action="run-job" data-job="weekly-reports" type="button">Draft last week's reports now</button></p>
+    </div>
     <div class="panel"><h2>Clients</h2>
       ${list === null ? `<p class="muted">Loading…</p>` : list.length
         ? `<div class="tablewrap"><table><thead><tr><th>Business</th><th>Sector</th><th class="num">Build</th><th class="num">Enquiries (30 days)</th><th></th></tr></thead><tbody>
@@ -384,7 +440,7 @@ function viewAdmin() {
 }
 
 function viewAdminClient() {
-  const { client, users, steps, numbers } = state.adminDetail;
+  const { client, users, steps, numbers, drafts, connections } = state.adminDetail;
   const hook = `${location.origin}/api/ingest?key=${client.ingest_key}`;
   return `<div class="pagehead"><div class="rowhead"><h1>${esc(client.name)}</h1>
       <span><button class="btn btn-ghost btn-small" data-action="admin-back" type="button">All clients</button>
@@ -413,7 +469,24 @@ function viewAdminClient() {
         <button class="btn btn-primary" type="submit">Link login</button>
       </form></div>
 
+    <div class="panel"><h2>Client details</h2>
+      ${Object.keys(client.intake || {}).length
+        ? `<dl class="kv">${INTAKE_LABELS.filter(([k]) => client.intake[k]).map(([k, label]) => `<dt>${esc(label)}</dt><dd>${esc(client.intake[k])}</dd>`).join("")}</dl>`
+        : `<p class="muted">They haven't filled in their details yet.</p>`}</div>
+
+    <div class="panel"><h2>Weekly report drafts</h2>
+      <p class="muted small">Drafted automatically every Monday. Add your notes, then publish so the client can see it.</p>
+      ${drafts.length ? drafts.map((d) => `<form class="form" data-form="draft" data-id="${d.id}">
+          <div class="field"><label for="dt${d.id}">Title</label><input id="dt${d.id}" name="title" value="${esc(d.title)}" maxlength="160" required></div>
+          <div class="field"><label for="db${d.id}">Report</label><textarea id="db${d.id}" name="body" maxlength="20000" required>${esc(d.body)}</textarea></div>
+          <p><button class="btn btn-primary" type="submit" value="publish">Publish</button>
+          <button class="btn btn-ghost" type="submit" value="save">Save draft</button>
+          <button class="btn btn-ghost" type="button" data-action="delete-draft" data-id="${d.id}">Delete</button></p>
+        </form>`).join("") : `<p class="muted">No drafts waiting.</p>`}
+    </div>
+
     <div class="panel"><h2>Ad accounts and calls</h2>
+      <ul class="checks"><li><b>Google Ads:</b> ${esc(connections.google.text)}</li><li><b>Facebook:</b> ${esc(connections.meta.text)}${client.meta_last_error ? ` (${esc(client.meta_last_error)})` : ""}</li></ul>
       <p class="muted small">Ad results pushed in automatically are matched to this business by these ids. Digits only; dashes are ignored.</p>
       <form class="form" data-form="accounts" data-id="${client.id}">
         <div class="field"><label for="gc">Google Ads customer id</label><input id="gc" name="google_customer_id" value="${esc(client.google_customer_id || "")}" placeholder="123-456-7890"></div>
@@ -501,12 +574,15 @@ async function enterPortal() {
 
 async function loadAdminList() {
   state.adminClients = null;
-  state.adminClients = (await api("/admin/clients")).clients;
+  state.attention = null;
+  const [list, att] = await Promise.all([api("/admin/clients"), api("/admin/attention")]);
+  state.adminClients = list.clients;
+  state.attention = att.items;
 }
 
 async function loadAdminClient(id) {
   const [detail, portal] = await Promise.all([api(`/admin/clients/${id}`), api(`/portal?client=${id}`)]);
-  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, steps: portal.steps };
+  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, steps: portal.steps };
 }
 
 /* ---------- events ---------- */
@@ -535,6 +611,25 @@ app.addEventListener("click", (e) => {
 
   if (a === "admin-open") return attempt(() => loadAdminClient(el.dataset.id));
   if (a === "admin-back") { state.adminDetail = null; return attempt(loadAdminList); }
+
+  if (a === "run-job") {
+    return attempt(async () => {
+      const r = await api(`/admin/run/${el.dataset.job}`, { method: "POST", body: {} });
+      await loadAdminList();
+      flash("ok", el.dataset.job === "meta-sync"
+        ? (r.skipped ? "No Facebook access token has been added yet." : `Facebook: ${r.saved} days saved, ${r.failed} accounts failed.`)
+        : `Drafted ${r.created} report${r.created === 1 ? "" : "s"} for the week of ${r.weekStart}.`);
+    });
+  }
+
+  if (a === "delete-draft") {
+    if (!confirm("Delete this draft?")) return;
+    return attempt(async () => {
+      await api(`/admin/reports/${el.dataset.id}`, { method: "DELETE" });
+      await loadAdminClient(state.adminDetail.client.id);
+      flash("ok", "Draft deleted.");
+    });
+  }
 
   if (a === "remove-number") {
     if (!confirm("Remove this tracking number? Calls to it will stop being forwarded once it is removed here.")) return;
@@ -642,6 +737,28 @@ app.addEventListener("submit", (e) => {
         await api(`/admin/clients/${id}/users`, { method: "POST", body: { email: f.email } });
         await loadAdminClient(id);
         flash("ok", "Login linked.");
+      });
+
+    case "intake":
+      return attempt(async () => {
+        await api("/portal/intake", { method: "POST", body: f });
+        await loadPortal();
+        flash("ok", "Thanks, we've saved your details.");
+      });
+
+    case "own-accounts":
+      return attempt(async () => {
+        await api("/portal/accounts", { method: "POST", body: f });
+        await loadPortal();
+        flash("ok", "Saved. We'll confirm the connection shortly.");
+      });
+
+    case "draft":
+      return attempt(async () => {
+        const publish = e.submitter && e.submitter.value === "publish";
+        await api(`/admin/reports/${id}`, { method: "PATCH", body: { title: f.title, body: f.body, publish } });
+        await loadAdminClient(state.adminDetail.client.id);
+        flash("ok", publish ? "Published. The client can see it now." : "Draft saved.");
       });
 
     case "setup-phone":

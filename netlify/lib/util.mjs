@@ -240,3 +240,131 @@ export function normaliseUkPhone(input) {
   if (!ok) return null;
   return "+44" + s.slice(1);
 }
+
+/* ---------- automation: dates, Meta results, weekly drafts, alerts ---------- */
+
+export const addDays = (day, n) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/** The Monday on or before a given day (YYYY-MM-DD). */
+export function mondayOf(day) {
+  const dow = (new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7; // Mon=0
+  return addDays(day, -dow);
+}
+
+export const gbp = (pence) => `£${(Number(pence || 0) / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Meta Marketing API insights ({ data: [{ date_start, spend, impressions, clicks, actions }] })
+ * to rows for ad_stats. Enquiries = Meta's own lead count (never summed across overlapping types).
+ */
+export function parseMetaInsights(payload) {
+  const rows = [];
+  for (const r of Array.isArray(payload?.data) ? payload.data : []) {
+    if (!isDay(r?.date_start)) continue;
+    const spend = Number(r.spend);
+    if (!Number.isFinite(spend) || spend < 0) continue;
+    const actions = Array.isArray(r.actions) ? r.actions : [];
+    const count = (t) => Number(actions.find((a) => a.action_type === t)?.value) || 0;
+    const leads = count("lead") || count("onsite_conversion.lead_grouped") || count("offsite_conversion.fb_pixel_lead");
+    rows.push({
+      day: r.date_start,
+      spend_pence: Math.round(spend * 100),
+      impressions: toInt(r.impressions) ?? 0,
+      clicks: toInt(r.clicks) ?? 0,
+      enquiries: Math.round(leads),
+    });
+  }
+  return rows;
+}
+
+const change = (now, before) => {
+  if (!before) return now ? "new this week" : "no change";
+  const pct = Math.round(((now - before) / before) * 100);
+  return pct === 0 ? "same as last week" : `${pct > 0 ? "up" : "down"} ${Math.abs(pct)}% on last week`;
+};
+
+/**
+ * Draft a plain-English weekly report.
+ * cur / prev = { enquiries, calls, answered, spend_pence, clicks, sources: [{ source, n }] }
+ */
+export function buildReport({ name, weekStart, cur, prev }) {
+  const end = addDays(weekStart, 6);
+  const cpe = cur.enquiries ? gbp(cur.spend_pence / cur.enquiries) : null;
+  const lines = [
+    `Week ${weekStart} to ${end} for ${name}.`,
+    "",
+    `Enquiries: ${cur.enquiries} (${change(cur.enquiries, prev.enquiries)}).`,
+    `Phone calls: ${cur.calls}, of which ${cur.answered} were answered.`,
+    `Ad spend: ${gbp(cur.spend_pence)}, with ${cur.clicks} clicks.`,
+    cpe ? `Cost per enquiry: ${cpe}.` : "Cost per enquiry: not available this week (no enquiries).",
+  ];
+  if (cur.sources.length) {
+    lines.push("", "Where enquiries came from:");
+    for (const s of cur.sources) lines.push(`- ${s.source}: ${s.n}`);
+  }
+  lines.push("", "DRAFT NOTES (edit before publishing): what worked this week, what we are changing next week.");
+  return { title: `Weekly report: ${weekStart}`, body: lines.join("\n") };
+}
+
+/**
+ * Things that need a human. r = one row of per-client facts, today = YYYY-MM-DD.
+ * Returns [{ level: "bad" | "warn", message }].
+ */
+export function findAlerts(r, today) {
+  const out = [];
+  const daysSince = (ts) => (ts ? Math.floor((Date.parse(`${today}T12:00:00Z`) - new Date(ts).getTime()) / 86400000) : null);
+  const live = Boolean(r.website_url);
+  const lastLead = daysSince(r.last_lead_at);
+  if (live && (lastLead === null || lastLead >= 3)) {
+    out.push({ level: "warn", message: lastLead === null ? "No enquiries received yet." : `No enquiries for ${lastLead} days.` });
+  }
+  if (r.meta_ad_account_id) {
+    if (r.meta_last_error) out.push({ level: "bad", message: `Facebook sync failing: ${r.meta_last_error}` });
+    else if (!r.meta_last_sync) out.push({ level: "warn", message: "Facebook account added but not synced yet." });
+  }
+  if (r.google_customer_id) {
+    const d = daysSince(r.google_last_push);
+    if (d === null) out.push({ level: "warn", message: "Google account added but no data received yet. Check the manager account link." });
+    else if (d >= 3) out.push({ level: "bad", message: `No Google data for ${d} days.` });
+  }
+  if (r.failed_calls_7d >= 2) out.push({ level: "bad", message: `${r.failed_calls_7d} calls failed to connect this week.` });
+  if (r.drafts > 0) out.push({ level: "warn", message: `${r.drafts} weekly report draft${r.drafts > 1 ? "s" : ""} waiting to be published.` });
+  if (!r.has_intake && daysSince(r.created_at) >= 2) out.push({ level: "warn", message: "Client hasn't filled in their details yet." });
+  return out;
+}
+
+/** How each ad account connection looks, for the client's "Connect" guide and Admin. */
+export function connectionStates(c, today) {
+  const daysSince = (ts) => (ts ? Math.floor((Date.parse(`${today}T12:00:00Z`) - new Date(ts).getTime()) / 86400000) : null);
+  const g = (() => {
+    if (!c.google_customer_id) return { state: "none", text: "Not connected" };
+    const d = daysSince(c.google_last_push);
+    if (d === null) return { state: "waiting", text: "Waiting for Google to link your account" };
+    return d >= 3 ? { state: "error", text: "No new data for a few days. We're looking into it." } : { state: "live", text: "Connected" };
+  })();
+  const m = (() => {
+    if (!c.meta_ad_account_id) return { state: "none", text: "Not connected" };
+    if (c.meta_last_error) return { state: "error", text: "We couldn't read your Facebook account yet. We're looking into it." };
+    return c.meta_last_sync ? { state: "live", text: "Connected" } : { state: "waiting", text: "Waiting for Facebook to link your account" };
+  })();
+  return { google: g, meta: m };
+}
+
+/** What a client may tell us about their business. Unknown fields are ignored. */
+export const INTAKE_FIELDS = {
+  legal_name: 120, address: 240, services: 1500, area: 300, hours: 300, monthly_budget: 12,
+  approver_name: 120, domain: 120, facebook_page: 300, google_ads: 40, notes: 1500,
+};
+
+export function cleanIntake(input) {
+  const out = {};
+  for (const [k, max] of Object.entries(INTAKE_FIELDS)) {
+    const v = clean(input?.[k], max);
+    if (v) out[k] = v;
+  }
+  return out;
+}

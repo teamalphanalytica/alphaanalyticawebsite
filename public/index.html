@@ -389,6 +389,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
       </div>
       <form name="contact" method="POST" action="/thank-you" data-netlify="true" netlify-honeypot="bot-field">
         <input type="hidden" name="subject" value="New enquiry from Alpha Analytica website">
+        <input type="hidden" name="source" value="">
+        <input type="hidden" name="campaign" value="">
         <p class="hidden"><label>Don't fill this out: <input name="bot-field"></label></p>
         <div class="field"><label for="name">Your name</label><input id="name" name="name" autocomplete="name" required></div>
         <div class="field"><label for="business">Business name</label><input id="business" name="business" autocomplete="organization" required></div>
@@ -598,6 +600,21 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
       setTimeout(function(){ var n = $('name'); if (n) n.focus({preventScroll: true}); }, reduce ? 0 : 600);
     });
   });
+})();
+</script>
+<script>
+/* Remember where a visitor came from (ad links carry utm_source / utm_campaign) and send it with the enquiry */
+(function () {
+  try {
+    var q = new URLSearchParams(location.search);
+    ['utm_source', 'utm_campaign'].forEach(function (k) { if (q.get(k)) sessionStorage.setItem(k, q.get(k).slice(0, 80)); });
+    var f = document.querySelector('form[name=contact]');
+    if (!f) return;
+    f.addEventListener('submit', function () {
+      if (f.elements.source) f.elements.source.value = sessionStorage.getItem('utm_source') || '';
+      if (f.elements.campaign) f.elements.campaign.value = sessionStorage.getItem('utm_campaign') || '';
+    });
+  } catch (e) {}
 })();
 </script>
 </body>

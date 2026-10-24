@@ -128,3 +128,7 @@ details.report summary::-webkit-details-marker{display:none}
   .step .chip{grid-column:2;justify-self:start}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.kv{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:6px 18px;margin:0}
+.kv dt{color:var(--slate);font-weight:600}
+.kv dd{margin:0;white-space:pre-wrap;word-break:break-word}
+@media (max-width:560px){.kv{grid-template-columns:1fr}.kv dd{margin-bottom:8px}}
