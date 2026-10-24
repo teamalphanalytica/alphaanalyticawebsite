@@ -205,3 +205,21 @@ test("cleanIntake keeps only known, trimmed fields", () => {
   const r = cleanIntake({ services: "  Boilers  ", hacker: "x", area: "", notes: { a: 1 } });
   assert.deepEqual(r, { services: "Boilers" });
 });
+
+import { reportReadyEmail, attentionEmail, monthRange, toCsv } from "./util.mjs";
+
+test("emails escape names and link to the portal", () => {
+  const e = reportReadyEmail({ clientName: "Joe <Plumbing>", title: "Week <b>1</b>", portalUrl: "https://x.co/portal/" });
+  assert.match(e.html, /Week &lt;b&gt;1&lt;\/b&gt;/);
+  assert.match(e.text, /https:\/\/x\.co\/portal\//);
+  const a = attentionEmail({ items: [{ client: "A", level: "bad", message: "x" }, { client: "B", level: "warn", message: "y" }], portalUrl: "u" });
+  assert.match(a.subject, /2 things need your attention/);
+  assert.match(attentionEmail({ items: [], portalUrl: "u" }).subject, /all clear/);
+});
+
+test("monthRange and toCsv", () => {
+  assert.deepEqual(monthRange("2026-12"), ["2026-12-01", "2027-01-01"]);
+  assert.deepEqual(monthRange("2026-02"), ["2026-02-01", "2026-03-01"]);
+  assert.equal(monthRange("2026-13"), null);
+  assert.equal(toCsv(["a", "b"], [["=SUM(1)", 'say "hi"']]), '"a","b"\r\n"\'=SUM(1)","say ""hi"""');
+});

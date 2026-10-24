@@ -45,6 +45,17 @@ These run on their own once the settings below exist.
 - Optional settings that show the client the right ids in their Connect guide: `GOOGLE_MCC_ID` (your Google Ads manager account id) and `META_BUSINESS_ID` (your Meta Business id).
 - Enquiry sources: ad links ending `?utm_source=google&utm_campaign=boilers` are remembered and attached to the enquiry, so reports can show where each one came from.
 
+## Emails (report ready, Monday attention list)
+The portal emails a client's logins when a report is published, and emails the admins every Monday after the drafts are made. It uses Resend (resend.com, free for up to 3,000 emails a month).
+1. Create a Resend account and an API key.
+2. Add your domain in Resend and add the DNS records it shows (so emails come from you and don't land in spam).
+3. Netlify environment variables: `RESEND_API_KEY`, and `EMAIL_FROM` such as `Alpha Analytica <reports@yourdomain.co.uk>`.
+4. Test with Admin > "Email me this list now".
+Until the key is set, nothing is emailed and everything else carries on working.
+
+## Billing summary
+Set each client's price per enquiry in Admin > client > Ad accounts and calls. Admin > Billing shows genuine enquiries per client per month (everything not marked spam), how many are not yet reviewed, and the total; "Download CSV" gives a file for your invoicing tool.
+
 ## 5. Facebook and Instagram results
 Facebook has no equivalent of the Google script. Options:
 - Use a connector tool (for example Windsor.ai or Supermetrics) that can send a daily webhook or sheet export, mapped to the same JSON as above with `platform: "meta"` and `meta_ad_account_id`.

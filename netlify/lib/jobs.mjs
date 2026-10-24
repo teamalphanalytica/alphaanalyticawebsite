@@ -1,7 +1,8 @@
 // Scheduled work: pull Facebook results, and draft the weekly reports.
 // Used by the scheduled functions and by the "Run now" buttons in Admin.
 
-import { addDays, mondayOf, parseMetaInsights, buildReport, clean } from "./util.mjs";
+import { addDays, mondayOf, parseMetaInsights, buildReport, clean, findAlerts, attentionEmail, reportReadyEmail, parseAdminEmails } from "./util.mjs";
+import { sendEmail } from "./email.mjs";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -75,4 +76,42 @@ export async function draftWeeklyReports(db, todayDay = new Date().toISOString()
     created += done.length;
   }
   return { weekStart, clients: clients.length, created };
+}
+
+
+const portalUrl = () => `${(Netlify.env.get("PUBLIC_BASE_URL") || "https://alpha-analytica.netlify.app").replace(/\/$/, "")}/portal/`;
+
+/** Everything that needs a human, across all clients. */
+export async function attentionItems(db, today = new Date().toISOString().slice(0, 10)) {
+  const rows = await db.sql`
+    SELECT c.id, c.name, c.website_url, c.created_at, c.google_customer_id, c.meta_ad_account_id,
+           c.google_last_push, c.meta_last_sync, c.meta_last_error,
+           (c.intake <> '{}'::jsonb) AS has_intake,
+           (SELECT MAX(received_at) FROM leads l WHERE l.client_id = c.id AND l.status <> 'spam') AS last_lead_at,
+           (SELECT COUNT(*)::int FROM calls k WHERE k.client_id = c.id AND k.started_at > NOW() - INTERVAL '7 days'
+              AND k.status IN ('failed', 'busy')) AS failed_calls_7d,
+           (SELECT COUNT(*)::int FROM reports r WHERE r.client_id = c.id AND NOT r.published) AS drafts
+    FROM clients c ORDER BY c.name`;
+  const items = [];
+  for (const r of rows) for (const a of findAlerts(r, today)) items.push({ client_id: r.id, client: r.name, ...a });
+  return items;
+}
+
+/** Monday email to the admins listing what needs attention. */
+export async function sendAttentionEmail(db) {
+  const items = await attentionItems(db);
+  const to = parseAdminEmails(Netlify.env.get("ADMIN_EMAILS"));
+  return sendEmail({ to, ...attentionEmail({ items, portalUrl: portalUrl() }) });
+}
+
+/** Tell a client's logins that a report is ready. Sends once per report. */
+export async function notifyReportPublished(db, reportId) {
+  const [r] = await db.sql`
+    SELECT r.id, r.title, r.emailed_at, r.published, c.id AS client_id, c.name
+    FROM reports r JOIN clients c ON c.id = r.client_id WHERE r.id = ${reportId}`;
+  if (!r || !r.published || r.emailed_at) return { skipped: true };
+  const users = await db.sql`SELECT email FROM client_users WHERE client_id = ${r.client_id}`;
+  const result = await sendEmail({ to: users.map((u) => u.email), ...reportReadyEmail({ clientName: r.name, title: r.title, portalUrl: portalUrl() }) });
+  if (result.sent) await db.sql`UPDATE reports SET emailed_at = NOW() WHERE id = ${reportId}`;
+  return result;
 }

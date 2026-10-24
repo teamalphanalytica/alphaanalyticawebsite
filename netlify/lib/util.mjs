@@ -368,3 +368,45 @@ export function cleanIntake(input) {
   }
   return out;
 }
+
+/* ---------- emails and billing ---------- */
+
+const htmlEscape = (s) => String(s ?? "").replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/** Email to a client: their weekly report is ready. Link only, so nothing private sits in an inbox. */
+export function reportReadyEmail({ clientName, title, portalUrl }) {
+  const subject = `Your weekly report is ready: ${clientName}`;
+  const text = `Hello,\n\nYour report "${title}" is ready to read in your Alpha Analytica portal:\n${portalUrl}\n\nThanks,\nAlpha Analytica`;
+  const html = `<p>Hello,</p><p>Your report <b>${htmlEscape(title)}</b> is ready to read in your Alpha Analytica portal.</p>
+<p><a href="${htmlEscape(portalUrl)}" style="background:#FFB703;color:#0A1128;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Open your portal</a></p><p>Thanks,<br>Alpha Analytica</p>`;
+  return { subject, text, html };
+}
+
+/** Monday email to the admins: everything that needs a human. */
+export function attentionEmail({ items, portalUrl }) {
+  const subject = items.length ? `Alpha Analytica: ${items.length} thing${items.length > 1 ? "s" : ""} need${items.length > 1 ? "" : "s"} your attention` : "Alpha Analytica: all clear this week";
+  const lines = items.map((i) => `- ${i.level === "bad" ? "PROBLEM" : "Check"}: ${i.client}: ${i.message}`);
+  const text = `${items.length ? lines.join("\n") : "Nothing needs your attention this week."}\n\nOpen Admin: ${portalUrl}`;
+  const html = `${items.length
+    ? `<ul>${items.map((i) => `<li><b>${i.level === "bad" ? "Problem" : "Check"}</b>, ${htmlEscape(i.client)}: ${htmlEscape(i.message)}</li>`).join("")}</ul>`
+    : "<p>Nothing needs your attention this week.</p>"}<p><a href="${htmlEscape(portalUrl)}">Open Admin</a></p>`;
+  return { subject, text, html };
+}
+
+/** "2026-10" to [first day, first day of next month]. */
+export function monthRange(month) {
+  if (typeof month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null;
+  const [y, m] = month.split("-").map(Number);
+  const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  return [`${month}-01`, `${next}-01`];
+}
+
+/** Rows to CSV, quoting every cell and neutralising spreadsheet formulas. */
+export function toCsv(header, rows) {
+  const cell = (v) => {
+    let s = String(v ?? "");
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+  return [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+}

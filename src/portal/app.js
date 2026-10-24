@@ -16,6 +16,8 @@ const state = {
   viewAs: null, // admin only: client id being viewed
   adminClients: null,
   attention: null,
+  billing: null, // { month, rows }
+  billingMonth: new Date().toISOString().slice(0, 7),
   adminDetail: null, // { client, users, steps }
   flash: null, // { type: "ok" | "err", text }
   setpw: null, // { kind: "invite" | "recovery", token }
@@ -390,24 +392,96 @@ function viewAds() {
     </div>` + connectPanel();
 }
 
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function addDaysKey(day, n) {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Small bar chart as inline SVG (no styles, so it is allowed by the portal's security policy). */
+function barChart(title, values, fmt) {
+  const w = 320, h = 150, top = 22, bottom = 22, gap = 8;
+  const max = Math.max(1, ...values);
+  const bw = (w - gap * (values.length + 1)) / values.length;
+  const bars = values.map((v, i) => {
+    const bh = Math.round(((h - top - bottom) * v) / max);
+    const x = gap + i * (bw + gap);
+    const y = h - bottom - bh;
+    return `<rect x="${x.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${Math.max(bh, v ? 2 : 0)}" rx="3" fill="#FFB703"></rect>
+      ${v ? `<text x="${(x + bw / 2).toFixed(1)}" y="${y - 5}" text-anchor="middle" font-size="10" fill="#0E1530">${esc(fmt(v))}</text>` : ""}
+      <text x="${(x + bw / 2).toFixed(1)}" y="${h - 6}" text-anchor="middle" font-size="10" fill="#4F5B7A">${DAY_NAMES[i]}</text>`;
+  }).join("");
+  const label = `${title}: ${values.map((v, i) => `${DAY_NAMES[i]} ${fmt(v)}`).join(", ")}`;
+  return `<figure class="chart"><figcaption>${esc(title)}</figcaption>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}"><line x1="0" y1="${h - bottom}" x2="${w}" y2="${h - bottom}" stroke="#D6DBE6"></line>${bars}</svg></figure>`;
+}
+
+/** The numbers for one report's week, from the data the portal already has. */
+function weekNumbers(d, weekStart) {
+  const days = Array.from({ length: 7 }, (_, i) => addDaysKey(dayKey(weekStart), i));
+  const idx = (k) => days.indexOf(dayKey(k));
+  const enq = Array(7).fill(0), spend = Array(7).fill(0);
+  let calls = 0, clicks = 0;
+  for (const l of d.leads) { const i = idx(l.received_at); if (i >= 0 && l.status !== "spam") enq[i]++; }
+  for (const s of d.stats) { const i = idx(s.day); if (i >= 0) { spend[i] += s.spend_pence; clicks += s.clicks; } }
+  for (const c of d.calls || []) if (idx(c.started_at) >= 0) calls++;
+  const totalEnq = enq.reduce((a, b) => a + b, 0), totalSpend = spend.reduce((a, b) => a + b, 0);
+  return { enq, spend, calls, clicks, totalEnq, totalSpend };
+}
+
 function viewReports() {
   const d = state.data;
-  return `<div class="pagehead"><h1>Reports</h1><p>A plain-English report every Monday.</p></div>
-    <div class="panel"><h2>What you'll get</h2><ul class="checks">
-      <li><b>A weekly report</b> on what came in, what it cost and what we're changing next.</li>
+  return `<div class="pagehead"><h1>Reports</h1><p>A plain-English report every Monday, with the week's numbers.</p></div>
+    <div class="panel no-print"><h2>What you'll get</h2><ul class="checks">
+      <li><b>A weekly report</b> on what came in, what it cost and what we're changing next. We'll email you when it's ready.</li>
       <li><b>Every enquiry</b> logged in the Enquiries tab, with where it came from.</li>
       <li><b>Ad results</b> for Google and Facebook, week by week.</li>
       <li><b>Call log</b> once call tracking is switched on.</li>
     </ul></div>
-    <div class="panel"><h2>Your reports</h2>
+    <div class="panel"><h2 class="no-print">Your reports</h2>
       ${d.reports.length
-        ? d.reports.map((r) => `<details class="report"><summary><span>${esc(r.title)}</span><span class="muted">${esc(fmtDate(r.week_start))}</span></summary>
-            <div class="report-body">${esc(r.body)}</div></details>`).join("")
+        ? d.reports.map((r, n) => {
+            const w = weekNumbers(d, r.week_start);
+            return `<details class="report" id="rep${r.id}" ${n === 0 ? "open" : ""}><summary><span>${esc(r.title)}</span><span class="muted">${esc(fmtDate(r.week_start))}</span></summary>
+            <div class="print-only print-head"><b>Alpha Analytica</b> · ${esc(d.client.name)} · ${esc(r.title)}</div>
+            <div class="tiles mt">
+              <div class="tile"><div class="n">${w.totalEnq}</div><div class="l">enquiries</div></div>
+              <div class="tile"><div class="n">${w.calls}</div><div class="l">phone calls</div></div>
+              <div class="tile"><div class="n">${money(w.totalSpend)}</div><div class="l">ad spend</div></div>
+              <div class="tile"><div class="n">${w.totalEnq ? money(w.totalSpend / w.totalEnq) : "–"}</div><div class="l">cost per enquiry</div></div>
+            </div>
+            <div class="charts">${barChart("Enquiries per day", w.enq, (v) => String(v))}${barChart("Ad spend per day", w.spend, (v) => money(v).replace(/\.00$/, ""))}</div>
+            <div class="report-body">${esc(r.body)}</div>
+            <p class="no-print"><button class="btn btn-ghost btn-small" type="button" data-action="print-report" data-id="${r.id}">Download PDF</button></p>
+          </details>`;
+          }).join("")
         : `<p class="muted">No reports yet. The first one arrives on the Monday after your campaigns go live.</p>`}
     </div>`;
 }
 
 /* ---------- admin views ---------- */
+
+function billingPanel() {
+  const b = state.billing;
+  const rows = b ? b.rows : null;
+  const total = rows ? rows.reduce((t, r) => t + (r.total_pence || 0), 0) : 0;
+  return `<div class="panel"><h2>Billing</h2>
+    <p class="muted small">Genuine enquiries per client for the month (everything not marked as spam). Check the "not yet reviewed" ones before you invoice.</p>
+    <form class="form wide" data-form="billing-month">
+      <div class="field"><label for="bm">Month</label><input id="bm" name="month" type="month" value="${esc(state.billingMonth)}" required></div>
+      <button class="btn btn-ghost" type="submit">Show</button>
+      <a class="btn btn-ghost" href="/api/admin/billing?month=${encodeURIComponent(state.billingMonth)}&amp;format=csv" download>Download CSV</a>
+    </form>
+    ${rows === null ? `<p class="muted">Loading…</p>` : `<div class="tablewrap"><table><thead><tr><th>Client</th><th class="num">Forms</th><th class="num">Calls</th><th class="num">Billable</th><th class="num">Not yet reviewed</th><th class="num">Price each</th><th class="num">Total</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="num">${r.forms}</td><td class="num">${r.calls}</td><td class="num">${r.billable}</td>
+        <td class="num">${r.unreviewed}</td><td class="num">${r.price == null ? `<span class="muted">not set</span>` : money(r.price)}</td>
+        <td class="num">${r.total_pence == null ? "–" : money(r.total_pence)}</td></tr>`).join("")}
+      <tr><td><b>Total</b></td><td></td><td></td><td></td><td></td><td></td><td class="num"><b>${money(total)}</b></td></tr>
+    </tbody></table></div>`}
+  </div>`;
+}
 
 function viewAdmin() {
   if (state.adminDetail) return viewAdminClient();
@@ -420,8 +494,10 @@ function viewAdmin() {
             <button class="btn btn-ghost btn-small" data-action="admin-open" data-id="${a.client_id}" type="button">Open</button></li>`).join("")}</ul>`
         : `<p class="muted">Nothing needs your attention.</p>`}
       <p class="mt"><button class="btn btn-ghost btn-small" data-action="run-job" data-job="meta-sync" type="button">Sync Facebook results now</button>
-        <button class="btn btn-ghost btn-small" data-action="run-job" data-job="weekly-reports" type="button">Draft last week's reports now</button></p>
+        <button class="btn btn-ghost btn-small" data-action="run-job" data-job="weekly-reports" type="button">Draft last week's reports now</button>
+        <button class="btn btn-ghost btn-small" data-action="run-job" data-job="attention-email" type="button">Email me this list now</button></p>
     </div>
+    ${billingPanel()}
     <div class="panel"><h2>Clients</h2>
       ${list === null ? `<p class="muted">Loading…</p>` : list.length
         ? `<div class="tablewrap"><table><thead><tr><th>Business</th><th>Sector</th><th class="num">Build</th><th class="num">Enquiries (30 days)</th><th></th></tr></thead><tbody>
@@ -491,6 +567,7 @@ function viewAdminClient() {
       <form class="form" data-form="accounts" data-id="${client.id}">
         <div class="field"><label for="gc">Google Ads customer id</label><input id="gc" name="google_customer_id" value="${esc(client.google_customer_id || "")}" placeholder="123-456-7890"></div>
         <div class="field"><label for="mc">Meta ad account id</label><input id="mc" name="meta_ad_account_id" value="${esc(client.meta_ad_account_id || "")}" placeholder="1234567890"></div>
+        <div class="field"><label for="pp">Price per enquiry (£)</label><input id="pp" name="price_per_enquiry" type="number" min="0" step="0.01" value="${client.price_per_enquiry_pence == null ? "" : esc((client.price_per_enquiry_pence / 100).toFixed(2))}" placeholder="25.00"></div>
         <div class="field"><label for="cm">Shortest call that counts as an enquiry (seconds)</label><input id="cm" name="call_min_seconds" type="number" min="0" max="3600" value="${esc(client.call_min_seconds)}"></div>
         <button class="btn btn-primary" type="submit">Save</button>
       </form></div>
@@ -575,9 +652,11 @@ async function enterPortal() {
 async function loadAdminList() {
   state.adminClients = null;
   state.attention = null;
-  const [list, att] = await Promise.all([api("/admin/clients"), api("/admin/attention")]);
+  state.billing = null;
+  const [list, att, bill] = await Promise.all([api("/admin/clients"), api("/admin/attention"), api(`/admin/billing?month=${encodeURIComponent(state.billingMonth)}`)]);
   state.adminClients = list.clients;
   state.attention = att.items;
+  state.billing = bill;
 }
 
 async function loadAdminClient(id) {
@@ -616,10 +695,29 @@ app.addEventListener("click", (e) => {
     return attempt(async () => {
       const r = await api(`/admin/run/${el.dataset.job}`, { method: "POST", body: {} });
       await loadAdminList();
+      if (el.dataset.job === "attention-email") {
+        return flash(r.sent ? "ok" : "err", r.sent ? "Sent. Check your inbox." : `Not sent: ${r.reason || r.error || "email isn't set up yet"}.`);
+      }
       flash("ok", el.dataset.job === "meta-sync"
         ? (r.skipped ? "No Facebook access token has been added yet." : `Facebook: ${r.saved} days saved, ${r.failed} accounts failed.`)
         : `Drafted ${r.created} report${r.created === 1 ? "" : "s"} for the week of ${r.weekStart}.`);
     });
+  }
+
+  if (a === "print-report") {
+    const target = document.getElementById(`rep${el.dataset.id}`);
+    if (!target) return;
+    target.open = true;
+    target.classList.add("print-target");
+    document.body.classList.add("printing");
+    const done = () => {
+      target.classList.remove("print-target");
+      document.body.classList.remove("printing");
+      window.removeEventListener("afterprint", done);
+    };
+    window.addEventListener("afterprint", done);
+    window.print();
+    return;
   }
 
   if (a === "delete-draft") {
@@ -739,6 +837,12 @@ app.addEventListener("submit", (e) => {
         flash("ok", "Login linked.");
       });
 
+    case "billing-month":
+      return attempt(async () => {
+        state.billingMonth = f.month;
+        state.billing = await api(`/admin/billing?month=${encodeURIComponent(f.month)}`);
+      });
+
     case "intake":
       return attempt(async () => {
         await api("/portal/intake", { method: "POST", body: f });
@@ -756,9 +860,9 @@ app.addEventListener("submit", (e) => {
     case "draft":
       return attempt(async () => {
         const publish = e.submitter && e.submitter.value === "publish";
-        await api(`/admin/reports/${id}`, { method: "PATCH", body: { title: f.title, body: f.body, publish } });
+        const r = await api(`/admin/reports/${id}`, { method: "PATCH", body: { title: f.title, body: f.body, publish } });
         await loadAdminClient(state.adminDetail.client.id);
-        flash("ok", publish ? "Published. The client can see it now." : "Draft saved.");
+        flash("ok", !publish ? "Draft saved." : r.email && r.email.sent ? "Published and emailed to the client." : "Published. The client can see it now (no email sent: email isn't set up yet).");
       });
 
     case "setup-phone":
@@ -771,7 +875,8 @@ app.addEventListener("submit", (e) => {
     case "accounts":
       return attempt(async () => {
         await api(`/admin/clients/${id}/accounts`, { method: "PATCH", body: {
-          google_customer_id: f.google_customer_id, meta_ad_account_id: f.meta_ad_account_id, call_min_seconds: f.call_min_seconds } });
+          google_customer_id: f.google_customer_id, meta_ad_account_id: f.meta_ad_account_id, call_min_seconds: f.call_min_seconds,
+          price_per_enquiry: f.price_per_enquiry } });
         await loadAdminClient(id);
         flash("ok", "Saved.");
       });
@@ -795,9 +900,9 @@ app.addEventListener("submit", (e) => {
 
     case "report":
       return attempt(async () => {
-        await api(`/admin/clients/${id}/reports`, { method: "POST", body: { week_start: f.week_start, title: f.title, body: f.body } });
+        const r = await api(`/admin/clients/${id}/reports`, { method: "POST", body: { week_start: f.week_start, title: f.title, body: f.body } });
         form.reset();
-        flash("ok", "Report posted. The client can see it now.");
+        flash("ok", r.email && r.email.sent ? "Report posted and emailed to the client." : "Report posted. The client can see it now.");
       });
   }
 });
