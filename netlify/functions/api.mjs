@@ -14,8 +14,9 @@ import { getUser } from "@netlify/identity";
 import {
   LEAD_STATUSES, STEP_STATUSES, PLATFORMS, DEFAULT_STEPS, HANGUP_TWIML,
   clean, toInt, isEmail, isE164, isDay, safeUrl, slugify, parseLead, readBody, sameOrigin, parseAdminEmails,
-  safeEqual, normaliseUkPhone, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
+  safeEqual, normaliseUkPhone, connectionStates, cleanIntake, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
 } from "../lib/util.mjs";
+import { syncMeta, draftWeeklyReports } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
 
@@ -56,6 +57,12 @@ export default async (req) => {
 
     if (parts[0] === "portal" && method === "GET") return await portal(db, me, url);
 
+    if (parts[0] === "portal" && parts[1] === "intake" && parts.length === 2 && method === "POST") {
+      return await saveIntake(req, db, me);
+    }
+    if (parts[0] === "portal" && parts[1] === "accounts" && parts.length === 2 && method === "POST") {
+      return await saveOwnAccounts(req, db, me);
+    }
     if (parts[0] === "portal" && parts[1] === "phone" && parts.length === 2 && method === "POST") {
       return await setupPhone(req, db, me);
     }
@@ -101,7 +108,9 @@ async function portal(db, me, url) {
   if (!clientId) return fail(404, "No business is linked to this login yet.");
 
   const [client] = await db.sql`
-    SELECT id, name, sector, website_url, preview_url, call_min_seconds FROM clients WHERE id = ${clientId}`;
+    SELECT id, name, sector, website_url, preview_url, call_min_seconds, intake,
+           google_customer_id, meta_ad_account_id, google_last_push, meta_last_sync, meta_last_error
+    FROM clients WHERE id = ${clientId}`;
   if (!client) return fail(404, "Business not found.");
 
   const steps = await db.sql`
@@ -116,7 +125,7 @@ async function portal(db, me, url) {
     ORDER BY day DESC, platform`;
   const reports = await db.sql`
     SELECT id, week_start, title, body, created_at
-    FROM reports WHERE client_id = ${clientId} ORDER BY week_start DESC LIMIT 20`;
+    FROM reports WHERE client_id = ${clientId} AND published ORDER BY week_start DESC LIMIT 20`;
 
   const numbers = await db.sql`
     SELECT id, number, forward_to, label FROM tracking_numbers WHERE client_id = ${clientId} AND number LIKE '+%' ORDER BY id`;
@@ -126,7 +135,13 @@ async function portal(db, me, url) {
     FROM calls c LEFT JOIN leads l ON l.call_sid = c.call_sid
     WHERE c.client_id = ${clientId} ORDER BY c.started_at DESC LIMIT 200`;
 
-  return json({ client, steps, leads, stats, reports, numbers, calls });
+  const connections = connectionStates(client, new Date().toISOString().slice(0, 10));
+  const { google_last_push, meta_last_sync, meta_last_error, ...publicClient } = client;
+  const agency = {
+    google_manager_id: clean(Netlify.env.get("GOOGLE_MCC_ID"), 20),
+    meta_business_id: clean(Netlify.env.get("META_BUSINESS_ID"), 30),
+  };
+  return json({ client: publicClient, steps, leads, stats, reports, numbers, calls, connections, agency });
 }
 
 async function updateLead(req, db, me, leadId) {
@@ -213,13 +228,17 @@ async function admin(req, db, p, method) {
   if (clientId && p.length === 2 && method === "GET") {
     const [client] = await db.sql`
       SELECT id, name, sector, website_url, preview_url, ingest_key,
-             google_customer_id, meta_ad_account_id, call_min_seconds
+             google_customer_id, meta_ad_account_id, call_min_seconds, intake,
+             google_last_push, meta_last_sync, meta_last_error
       FROM clients WHERE id = ${clientId}`;
     if (!client) return fail(404, "Business not found.");
     const users = await db.sql`SELECT email FROM client_users WHERE client_id = ${clientId} ORDER BY email`;
     const numbers = await db.sql`
       SELECT id, number, forward_to, label FROM tracking_numbers WHERE client_id = ${clientId} AND number LIKE '+%' ORDER BY id`;
-    return json({ client, users: users.map((u) => u.email), numbers });
+    const drafts = await db.sql`
+      SELECT id, week_start, title, body FROM reports WHERE client_id = ${clientId} AND NOT published ORDER BY week_start DESC`;
+    const connections = connectionStates(client, new Date().toISOString().slice(0, 10));
+    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections });
   }
 
   // PATCH /api/admin/clients/:id/accounts  (ad account ids and the call-length rule)
@@ -306,6 +325,46 @@ async function admin(req, db, p, method) {
     return json({ ok: true });
   }
 
+  // GET /api/admin/attention  (everything that needs a human, across all clients)
+  if (p[0] === "attention" && p.length === 1 && method === "GET") {
+    const rows = await db.sql`
+      SELECT c.id, c.name, c.website_url, c.created_at, c.google_customer_id, c.meta_ad_account_id,
+             c.google_last_push, c.meta_last_sync, c.meta_last_error,
+             (c.intake <> '{}'::jsonb) AS has_intake,
+             (SELECT MAX(received_at) FROM leads l WHERE l.client_id = c.id AND l.status <> 'spam') AS last_lead_at,
+             (SELECT COUNT(*)::int FROM calls k WHERE k.client_id = c.id AND k.started_at > NOW() - INTERVAL '7 days'
+                AND k.status IN ('failed', 'busy')) AS failed_calls_7d,
+             (SELECT COUNT(*)::int FROM reports r WHERE r.client_id = c.id AND NOT r.published) AS drafts
+      FROM clients c ORDER BY c.name`;
+    const today = new Date().toISOString().slice(0, 10);
+    const items = [];
+    for (const r of rows) for (const a of findAlerts(r, today)) items.push({ client_id: r.id, client: r.name, ...a });
+    return json({ items });
+  }
+
+  // POST /api/admin/run/meta-sync  and  /api/admin/run/weekly-reports  ("Run now" buttons)
+  if (p[0] === "run" && p.length === 2 && method === "POST") {
+    if (p[1] === "meta-sync") return json(await syncMeta(db));
+    if (p[1] === "weekly-reports") return json(await draftWeeklyReports(db));
+    return fail(404, "Unknown job.");
+  }
+
+  // PATCH /api/admin/reports/:id  (edit a draft, or publish it)   DELETE removes it
+  if (p[0] === "reports" && p.length === 2 && (method === "PATCH" || method === "DELETE")) {
+    const reportId = toInt(p[1], { min: 1 });
+    if (!reportId) return fail(400, "Bad id.");
+    if (method === "DELETE") {
+      await db.sql`DELETE FROM reports WHERE id = ${reportId}`;
+      return json({ ok: true });
+    }
+    const { value } = await readBody(req, 60_000);
+    const title = clean(value?.title, 160);
+    const body = clean(value?.body, 20_000);
+    if (!title || !body) return fail(400, "A title and report text are required.");
+    await db.sql`UPDATE reports SET title = ${title}, body = ${body}, published = ${value?.publish === true} WHERE id = ${reportId}`;
+    return json({ ok: true });
+  }
+
   // POST /api/admin/clients/:id/reports
   if (clientId && p[2] === "reports" && p.length === 3 && method === "POST") {
     const { value } = await readBody(req, 60_000);
@@ -349,6 +408,7 @@ async function ingestAds(req, db) {
       ? await db.sql`SELECT id FROM clients WHERE google_customer_id = ${r.ident}`
       : await db.sql`SELECT id FROM clients WHERE meta_ad_account_id = ${r.ident}`;
     if (!found[0]) { unknown++; continue; }
+    if (r.platform === "google") await db.sql`UPDATE clients SET google_last_push = NOW() WHERE id = ${found[0].id}`;
     await db.sql`
       INSERT INTO ad_stats (client_id, day, platform, spend_pence, impressions, clicks, enquiries)
       VALUES (${found[0].id}, ${r.day}, ${r.platform}, ${r.spend_pence}, ${r.impressions}, ${r.clicks}, ${r.enquiries})
@@ -527,4 +587,34 @@ async function setupPhone(req, db, me) {
     await db.sql`DELETE FROM tracking_numbers WHERE id = ${reserved[0].id} AND number NOT LIKE '+%'`;
     return fail(502, "We couldn't set that up automatically. We've been told and will sort it out for you.");
   }
+}
+
+
+/* ---------- a client tells us about their business, and their ad account ids ---------- */
+
+async function saveIntake(req, db, me) {
+  if (!me.client) return fail(403, "No business is linked to this login yet.");
+  const { value } = await readBody(req, 30_000);
+  const intake = cleanIntake(value);
+  if (!Object.keys(intake).length) return fail(400, "Please fill in at least one box.");
+  await db.sql`UPDATE clients SET intake = ${JSON.stringify(intake)}::jsonb WHERE id = ${me.client.id}`;
+  return json({ ok: true });
+}
+
+// Clients can add their own ad account ids, but only into an empty slot. Changing one is an admin job.
+async function saveOwnAccounts(req, db, me) {
+  if (!me.client) return fail(403, "No business is linked to this login yet.");
+  const { value } = await readBody(req);
+  const google = clean(value?.google_customer_id, 30)?.replace(/\D/g, "") || null;
+  const meta = clean(value?.meta_ad_account_id, 30)?.replace(/\D/g, "") || null;
+  if (google && !/^\d{10}$/.test(google)) return fail(400, "A Google Ads customer id has 10 digits, like 123-456-7890.");
+  if (meta && !/^\d{5,20}$/.test(meta)) return fail(400, "A Facebook ad account id is a number, like 1234567890.");
+  if (!google && !meta) return fail(400, "Enter at least one account id.");
+  try {
+    if (google) await db.sql`UPDATE clients SET google_customer_id = ${google} WHERE id = ${me.client.id} AND google_customer_id IS NULL`;
+    if (meta) await db.sql`UPDATE clients SET meta_ad_account_id = ${meta} WHERE id = ${me.client.id} AND meta_ad_account_id IS NULL`;
+  } catch {
+    return fail(409, "That account is already linked to another business. Please contact us.");
+  }
+  return json({ ok: true });
 }

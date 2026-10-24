@@ -148,3 +148,60 @@ test("normaliseUkPhone refuses premium and odd numbers", () => {
     assert.equal(normaliseUkPhone(bad), null, String(bad));
   }
 });
+
+import { addDays, mondayOf, gbp, parseMetaInsights, buildReport, findAlerts } from "./util.mjs";
+
+test("mondayOf and addDays", () => {
+  assert.equal(mondayOf("2026-10-24"), "2026-10-19"); // Saturday
+  assert.equal(mondayOf("2026-10-19"), "2026-10-19");
+  assert.equal(mondayOf("2026-10-25"), "2026-10-19"); // Sunday
+  assert.equal(addDays("2026-10-31", 1), "2026-11-01");
+});
+
+test("parseMetaInsights takes one lead count and skips bad rows", () => {
+  const rows = parseMetaInsights({ data: [
+    { date_start: "2026-10-23", spend: "12.50", impressions: "900", clicks: "30",
+      actions: [{ action_type: "lead", value: "3" }, { action_type: "onsite_conversion.lead_grouped", value: "3" }, { action_type: "link_click", value: "30" }] },
+    { date_start: "bad", spend: "1" },
+    { date_start: "2026-10-22", spend: "-4" },
+  ] });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0], { day: "2026-10-23", spend_pence: 1250, impressions: 900, clicks: 30, enquiries: 3 });
+});
+
+test("buildReport reads sensibly", () => {
+  const r = buildReport({ name: "Joe Plumbing", weekStart: "2026-10-12",
+    cur: { enquiries: 6, calls: 4, answered: 3, spend_pence: 12000, clicks: 80, sources: [{ source: "Google ads", n: 4 }, { source: "Website", n: 2 }] },
+    prev: { enquiries: 4 } });
+  assert.match(r.body, /Enquiries: 6 \(up 50% on last week\)/);
+  assert.match(r.body, /Cost per enquiry: £20\.00/);
+  assert.match(r.body, /Google ads: 4/);
+  assert.equal(gbp(1234), "£12.34");
+});
+
+test("findAlerts flags what needs a human", () => {
+  const base = { website_url: "https://x.co", last_lead_at: "2026-10-23T10:00:00Z", has_intake: true, created_at: "2026-10-01T00:00:00Z", failed_calls_7d: 0, drafts: 0 };
+  assert.deepEqual(findAlerts(base, "2026-10-24"), []);
+  assert.match(findAlerts({ ...base, last_lead_at: "2026-10-19T10:00:00Z" }, "2026-10-24")[0].message, /No enquiries for 5 days/);
+  assert.equal(findAlerts({ ...base, meta_ad_account_id: "1", meta_last_error: "token expired" }, "2026-10-24")[0].level, "bad");
+  assert.ok(findAlerts({ ...base, google_customer_id: "1" }, "2026-10-24").some((a) => /no data received/.test(a.message)));
+  assert.ok(findAlerts({ ...base, failed_calls_7d: 3 }, "2026-10-24").some((a) => /failed/.test(a.message)));
+  assert.ok(findAlerts({ ...base, has_intake: false }, "2026-10-24").some((a) => /details/.test(a.message)));
+});
+
+import { connectionStates, cleanIntake } from "./util.mjs";
+
+test("connectionStates", () => {
+  const t = "2026-10-24";
+  assert.equal(connectionStates({}, t).google.state, "none");
+  assert.equal(connectionStates({ google_customer_id: "1" }, t).google.state, "waiting");
+  assert.equal(connectionStates({ google_customer_id: "1", google_last_push: "2026-10-23T05:00:00Z" }, t).google.state, "live");
+  assert.equal(connectionStates({ google_customer_id: "1", google_last_push: "2026-10-18T05:00:00Z" }, t).google.state, "error");
+  assert.equal(connectionStates({ meta_ad_account_id: "1", meta_last_error: "x" }, t).meta.state, "error");
+  assert.equal(connectionStates({ meta_ad_account_id: "1", meta_last_sync: "2026-10-24T05:30:00Z" }, t).meta.state, "live");
+});
+
+test("cleanIntake keeps only known, trimmed fields", () => {
+  const r = cleanIntake({ services: "  Boilers  ", hacker: "x", area: "", notes: { a: 1 } });
+  assert.deepEqual(r, { services: "Boilers" });
+});
