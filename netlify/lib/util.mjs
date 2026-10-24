@@ -219,3 +219,24 @@ export function parseAdRows(input) {
   });
   return { rows, errors };
 }
+
+/* ---------- customer self-serve phone setup ---------- */
+
+/**
+ * Turn what a customer types ("07700 900123", "+44 7700 900123") into +44… form.
+ * Only ordinary UK mobiles, landlines and 03 numbers are accepted. Premium-rate (09),
+ * 08 services, 070 personal numbers and 118 directory numbers are refused, so a
+ * forwarded call can never be billed at a premium rate to the agency's account.
+ */
+export function normaliseUkPhone(input) {
+  if (typeof input !== "string") return null;
+  let s = input.replace(/[\s().-]/g, "");
+  if (/^\+44/.test(s)) s = "0" + s.slice(3);
+  else if (/^0044/.test(s)) s = "0" + s.slice(4);
+  if (!/^0\d{9,10}$/.test(s)) return null;
+  const ok = /^07[1-57-9]\d{8}$/.test(s) // mobiles (not 070 personal, 076 pagers)
+    || /^0[123]\d{9}$/.test(s) // 01, 02, 03 numbers
+    || /^01\d{8,9}$/.test(s);
+  if (!ok) return null;
+  return "+44" + s.slice(1);
+}

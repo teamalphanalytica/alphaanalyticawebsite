@@ -14,7 +14,7 @@ import { getUser } from "@netlify/identity";
 import {
   LEAD_STATUSES, STEP_STATUSES, PLATFORMS, DEFAULT_STEPS, HANGUP_TWIML,
   clean, toInt, isEmail, isE164, isDay, safeUrl, slugify, parseLead, readBody, sameOrigin, parseAdminEmails,
-  safeEqual, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
+  safeEqual, normaliseUkPhone, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
 } from "../lib/util.mjs";
 
 export const config = { path: "/api/*" };
@@ -55,6 +55,10 @@ export default async (req) => {
     if (parts[0] === "me" && method === "GET") return json(me);
 
     if (parts[0] === "portal" && method === "GET") return await portal(db, me, url);
+
+    if (parts[0] === "portal" && parts[1] === "phone" && parts.length === 2 && method === "POST") {
+      return await setupPhone(req, db, me);
+    }
 
     if (parts[0] === "leads" && parts.length === 2 && method === "PATCH") {
       return await updateLead(req, db, me, toInt(parts[1], { min: 1 }));
@@ -115,7 +119,7 @@ async function portal(db, me, url) {
     FROM reports WHERE client_id = ${clientId} ORDER BY week_start DESC LIMIT 20`;
 
   const numbers = await db.sql`
-    SELECT id, number, forward_to, label FROM tracking_numbers WHERE client_id = ${clientId} ORDER BY id`;
+    SELECT id, number, forward_to, label FROM tracking_numbers WHERE client_id = ${clientId} AND number LIKE '+%' ORDER BY id`;
   const calls = await db.sql`
     SELECT c.id, c.started_at, c.from_number, c.label, c.status, c.duration_seconds,
            (l.id IS NOT NULL) AS counted
@@ -214,7 +218,7 @@ async function admin(req, db, p, method) {
     if (!client) return fail(404, "Business not found.");
     const users = await db.sql`SELECT email FROM client_users WHERE client_id = ${clientId} ORDER BY email`;
     const numbers = await db.sql`
-      SELECT id, number, forward_to, label FROM tracking_numbers WHERE client_id = ${clientId} ORDER BY id`;
+      SELECT id, number, forward_to, label FROM tracking_numbers WHERE client_id = ${clientId} AND number LIKE '+%' ORDER BY id`;
     return json({ client, users: users.map((u) => u.email), numbers });
   }
 
@@ -445,4 +449,82 @@ async function twilioStatus(req, db) {
   }
 
   return twiml(status === "completed" ? HANGUP_TWIML : sayHangupTwiml("Sorry, we could not reach anyone. Please try again shortly."));
+}
+
+/* ---------- a customer sets up their own tracking number ---------- */
+
+async function twilioApi(path, { method = "GET", form } = {}) {
+  const sid = Netlify.env.get("TWILIO_ACCOUNT_SID");
+  const token = Netlify.env.get("TWILIO_AUTH_TOKEN");
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/${path}`, {
+    method,
+    headers: {
+      authorization: "Basic " + Buffer.from(`${sid}:${token}`).toString("base64"),
+      ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+    },
+    body: form ? new URLSearchParams(form).toString() : undefined,
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Twilio ${res.status}: ${data.message || "error"}`);
+  return data;
+}
+
+async function setupPhone(req, db, me) {
+  if (!me.client) return fail(403, "No business is linked to this login yet.");
+  const parsed = await readBody(req);
+  const phone = normaliseUkPhone(String(parsed.value?.phone ?? ""));
+  if (!phone) return fail(400, "Please enter a normal UK landline or mobile number, like 07700 900123.");
+  const clientId = me.client.id;
+
+  // Already set up? Then this just changes where calls are forwarded. No cost.
+  const existing = await db.sql`SELECT id, number FROM tracking_numbers WHERE client_id = ${clientId} AND number LIKE '+%'`;
+  if (existing.length) {
+    await db.sql`UPDATE tracking_numbers SET forward_to = ${phone} WHERE client_id = ${clientId} AND number LIKE '+%'`;
+    return json({ ok: true, changed: true });
+  }
+
+  // Buying a number costs money, so it is switched on deliberately and capped
+  const cfg = {
+    on: Netlify.env.get("SELF_SERVE_NUMBERS") === "on",
+    sid: Netlify.env.get("TWILIO_ACCOUNT_SID"),
+    bundle: Netlify.env.get("TWILIO_BUNDLE_SID"),
+    address: Netlify.env.get("TWILIO_ADDRESS_SID"),
+    max: toInt(Netlify.env.get("SELF_SERVE_MAX_NUMBERS"), { min: 0, max: 1000 }) ?? 20,
+  };
+  if (!cfg.on || !cfg.sid || !Netlify.env.get("TWILIO_AUTH_TOKEN") || !cfg.bundle || !cfg.address) {
+    return fail(503, "Automatic setup isn't switched on yet. We'll set your number up for you and let you know.");
+  }
+  const [{ n }] = await db.sql`SELECT COUNT(*)::int AS n FROM tracking_numbers WHERE self_serve`;
+  if (n >= cfg.max) return fail(503, "We'll set your number up for you and let you know.");
+
+  // Reserve the slot first, so a double click can't buy two numbers
+  await db.sql`DELETE FROM tracking_numbers WHERE self_serve AND number NOT LIKE '+%' AND created_at < NOW() - INTERVAL '5 minutes'`;
+  const reserved = await db.sql`
+    INSERT INTO tracking_numbers (client_id, number, forward_to, label, self_serve)
+    VALUES (${clientId}, ${"pending:" + clientId}, ${phone}, 'Website and ads', TRUE)
+    ON CONFLICT DO NOTHING RETURNING id`;
+  if (!reserved[0]) return fail(409, "Your number is being set up. Give it a minute and refresh.");
+
+  try {
+    const type = Netlify.env.get("TWILIO_NUMBER_TYPE") || "Local";
+    const found = await twilioApi(`AvailablePhoneNumbers/GB/${type}.json?VoiceEnabled=true&PageSize=1`);
+    const candidate = found.available_phone_numbers?.[0]?.phone_number;
+    if (!candidate) throw new Error("No numbers available");
+    const base = (Netlify.env.get("PUBLIC_BASE_URL") || new URL(req.url).origin).replace(/\/$/, "");
+    const bought = await twilioApi("IncomingPhoneNumbers.json", {
+      method: "POST",
+      form: {
+        PhoneNumber: candidate, BundleSid: cfg.bundle, AddressSid: cfg.address,
+        VoiceUrl: `${base}/api/twilio/voice`, VoiceMethod: "POST",
+        FriendlyName: `${me.client.name}`.slice(0, 60),
+      },
+    });
+    await db.sql`UPDATE tracking_numbers SET number = ${bought.phone_number} WHERE id = ${reserved[0].id}`;
+    return json({ ok: true, number: bought.phone_number }, 201);
+  } catch (e) {
+    console.error("self-serve number failed", e);
+    await db.sql`DELETE FROM tracking_numbers WHERE id = ${reserved[0].id} AND number NOT LIKE '+%'`;
+    return fail(502, "We couldn't set that up automatically. We've been told and will sort it out for you.");
+  }
 }

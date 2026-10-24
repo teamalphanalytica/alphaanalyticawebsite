@@ -133,3 +133,18 @@ test("parseAdRows keeps good rows and reports bad ones", () => {
   assert.equal(rows[0].spend_pence, 1234);
   assert.equal(rows[0].enquiries, 5);
 });
+
+import { normaliseUkPhone } from "./util.mjs";
+
+test("normaliseUkPhone accepts normal UK numbers", () => {
+  assert.equal(normaliseUkPhone("07700 900123"), "+447700900123");
+  assert.equal(normaliseUkPhone("+44 7700 900123"), "+447700900123");
+  assert.equal(normaliseUkPhone("0161 234 5678"), "+441612345678");
+  assert.equal(normaliseUkPhone("0044 20 7946 0000"), "+442079460000");
+});
+
+test("normaliseUkPhone refuses premium and odd numbers", () => {
+  for (const bad of ["0900 123 4567", "0871 234 5678", "070 1234 5678", "118 118", "0800 123 456", "+1 415 867 5309", "abc", "", null, "0770090012"]) {
+    assert.equal(normaliseUkPhone(bad), null, String(bad));
+  }
+});

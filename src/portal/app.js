@@ -266,6 +266,17 @@ function fmtDuration(sec) {
   return sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
 }
 
+function phoneForm(hasNumber) {
+  return `<div class="panel"><h2>${hasNumber ? "Change where calls go" : "Set up call tracking"}</h2>
+      <p class="muted small">${hasNumber
+        ? "Enter the phone number you'd like your calls to ring."
+        : "Enter the phone number you answer your business calls on, then press Set up. We'll create your tracking number and forward every call to you."}</p>
+      <form class="form" data-form="setup-phone">
+        <div class="field"><label for="ph">Your phone number</label><input id="ph" name="phone" type="tel" inputmode="tel" autocomplete="tel" required maxlength="30" placeholder="07700 900123"></div>
+        <button class="btn btn-primary" type="submit">${hasNumber ? "Save" : "Set up"}</button>
+      </form></div>`;
+}
+
 function viewCalls() {
   const d = state.data;
   const head = `<div class="pagehead"><h1>Calls</h1><p>Every call from your ads and website, counted.</p></div>`;
@@ -277,7 +288,7 @@ function viewCalls() {
         <div class="col"><b>Where from</b>Which ad or page the caller came from</div>
         <div class="col"><b>How long</b>Length of the call</div>
         <div class="col"><b>Answered?</b>Whether you picked up</div>
-      </div></div>`;
+      </div></div>` + phoneForm(false);
   }
   const cutoff = Date.now() - 30 * 86400000;
   const recent = d.calls.filter((c) => new Date(c.started_at).getTime() >= cutoff);
@@ -302,6 +313,7 @@ function viewCalls() {
       ${d.numbers.length ? `<ul class="checks">${d.numbers.map((n) => `<li><b>${esc(n.number)}</b> <span class="muted">(${esc(n.label)}) forwards to ${esc(n.forward_to)}</span></li>`).join("")}</ul>` : `<p class="muted">No numbers yet.</p>`}
       <p class="muted small mt">An answered call lasting at least ${esc(min)} seconds counts as an enquiry.</p>
     </div>
+    ${phoneForm(true)}
     <div class="panel"><h2>Call log</h2>
       ${d.calls.length
         ? `<div class="tablewrap"><table><thead><tr><th>When</th><th>Caller</th><th>Came from</th><th>Result</th><th class="num">Length</th><th>Enquiry</th></tr></thead><tbody>${rows}</tbody></table></div>`
@@ -630,6 +642,13 @@ app.addEventListener("submit", (e) => {
         await api(`/admin/clients/${id}/users`, { method: "POST", body: { email: f.email } });
         await loadAdminClient(id);
         flash("ok", "Login linked.");
+      });
+
+    case "setup-phone":
+      return attempt(async () => {
+        const r = await api("/portal/phone", { method: "POST", body: { phone: f.phone } });
+        await loadPortal();
+        flash("ok", r.changed ? "Saved. Calls now ring that number." : `Done. Your tracking number is ${r.number}. Use it on your ads and website.`);
       });
 
     case "accounts":

@@ -24,6 +24,13 @@ For each client site: Forms > Form notifications > Add notification > Outgoing w
 
 Notes: the client's phone will show the tracking number as the caller, not the customer's number. The customer's number is in the portal call log. Calls are not recorded. If you ever add recording, you must tell callers at the start. Caller numbers are personal data, so mention call tracking in your privacy notice.
 
+### Customers set up their own number
+Customers can open the Calls tab, type their phone number and press **Set up**. The portal then buys a UK number from Twilio, points it at your voice webhook and forwards calls to them. Each number costs money every month, so it is off until you switch it on:
+1. Twilio console > Phone Numbers > Regulatory Compliance: create and get approved a UK bundle and address. Note the Bundle SID (starts `BU`) and Address SID (starts `AD`).
+2. Netlify environment variables: `TWILIO_ACCOUNT_SID`, `TWILIO_BUNDLE_SID`, `TWILIO_ADDRESS_SID`, and finally `SELF_SERVE_NUMBERS=on`.
+3. Optional: `SELF_SERVE_MAX_NUMBERS` (default 20) caps how many numbers customers can create in total, and `TWILIO_NUMBER_TYPE` (`Local` by default, or `Mobile` / `National`).
+Safeguards: one number per customer, double clicks can't buy two, and only ordinary UK mobiles and landlines are accepted as forwarding numbers (no premium-rate, 08, 070 or 118 numbers). Changing the forwarding number later is free. If Twilio refuses, the customer sees a friendly message and you check the Netlify function log.
+
 ## 4. Google Ads results
 1. In Admin > client > Ad accounts, save the client's Google Ads customer id.
 2. In your Google Ads manager account: Tools > Bulk actions > Scripts > New script. Paste `docs/google-ads-script.js`, set `PORTAL_URL` and `PUSH_KEY`, authorise, Preview, then schedule it.
