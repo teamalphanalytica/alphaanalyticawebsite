@@ -1,0 +1,19 @@
+{
+  "name": "alpha-analytica",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test netlify/lib/util.test.mjs"
+  },
+  "dependencies": {
+    "@netlify/database": "latest",
+    "@netlify/identity": "latest"
+  },
+  "devDependencies": {
+    "esbuild": "latest"
+  },
+  "engines": {
+    "node": ">=20.12.2"
+  }
+}
