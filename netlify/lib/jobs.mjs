@@ -1,7 +1,7 @@
 // Scheduled work: pull Facebook results, and draft the weekly reports.
 // Used by the scheduled functions and by the "Run now" buttons in Admin.
 
-import { addDays, mondayOf, parseMetaInsights, buildReport, clean, findAlerts, attentionEmail, reportReadyEmail, parseAdminEmails } from "./util.mjs";
+import { addDays, mondayOf, parseMetaInsights, buildReport, clean, findAlerts, attentionEmail, reportReadyEmail, parseAdminEmails, metaLeadEvent, metaEventUsable, toInt } from "./util.mjs";
 import { sendEmail } from "./email.mjs";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -113,5 +113,64 @@ export async function notifyReportPublished(db, reportId) {
   const users = await db.sql`SELECT email FROM client_users WHERE client_id = ${r.client_id}`;
   const result = await sendEmail({ to: users.map((u) => u.email), ...reportReadyEmail({ clientName: r.name, title: r.title, portalUrl: portalUrl() }) });
   if (result.sent) await db.sql`UPDATE reports SET emailed_at = NOW() WHERE id = ${reportId}`;
+  return result;
+}
+
+
+/* ---------- genuine enquiries back to Facebook (Meta Conversions API) ---------- */
+
+/** Hours to wait before sending, so you can mark spam first. Default 6. */
+export const conversionDelayHours = () => toInt(Netlify.env.get("CONVERSION_DELAY_HOURS"), { min: 0, max: 72 }) ?? 6;
+
+export async function sendMetaConversions(db) {
+  const token = Netlify.env.get("META_CAPI_TOKEN") || Netlify.env.get("META_ACCESS_TOKEN");
+  const result = { pixels: 0, sent: 0, failed: 0, unusable: 0, skipped: !token };
+  if (!token) return result;
+  const delay = conversionDelayHours();
+  const leads = await db.sql`
+    SELECT l.id, l.client_id, l.type, l.received_at, l.email, l.phone, l.fbc, l.fbp, l.ip, l.user_agent, l.page_url,
+           c.meta_pixel_id
+    FROM leads l JOIN clients c ON c.id = l.client_id
+    WHERE l.meta_sent_at IS NULL AND l.status <> 'spam' AND c.meta_pixel_id IS NOT NULL
+      AND l.received_at < NOW() - make_interval(hours => ${delay}::int)
+      AND l.received_at > NOW() - INTERVAL '6 days 20 hours'
+    ORDER BY l.received_at LIMIT 1000`;
+  const byPixel = new Map();
+  for (const l of leads) {
+    const ev = metaLeadEvent(l);
+    if (!metaEventUsable(ev)) {
+      result.unusable++;
+      await db.sql`UPDATE leads SET meta_error = 'No email, phone or Facebook click to match on' WHERE id = ${l.id}`;
+      continue;
+    }
+    if (!byPixel.has(l.meta_pixel_id)) byPixel.set(l.meta_pixel_id, []);
+    byPixel.get(l.meta_pixel_id).push({ id: l.id, ev });
+  }
+  result.pixels = byPixel.size;
+  for (const [pixel, items] of byPixel) {
+    for (let i = 0; i < items.length; i += 500) {
+      const batch = items.slice(i, i + 500);
+      const ids = batch.map((b) => b.id);
+      try {
+        const body = { data: batch.map((b) => b.ev) };
+        const testCode = Netlify.env.get("META_TEST_EVENT_CODE");
+        if (testCode) body.test_event_code = testCode;
+        const res = await fetch(`https://graph.facebook.com/v21.0/${pixel}/events`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(20_000),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(clean(data?.error?.message, 200) || `Facebook said ${res.status}`);
+        await db.sql`UPDATE leads SET meta_sent_at = NOW(), meta_error = NULL WHERE id = ANY(${ids})`;
+        result.sent += ids.length;
+      } catch (e) {
+        console.error("meta conversions failed", pixel, e);
+        result.failed += ids.length;
+        await db.sql`UPDATE leads SET meta_error = ${clean(e.message, 200) || "Send failed"} WHERE id = ANY(${ids})`;
+      }
+    }
+  }
   return result;
 }

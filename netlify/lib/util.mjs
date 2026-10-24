@@ -90,6 +90,12 @@ export function parseLead(body) {
   };
 
   const lead = {
+    ...clickIds({
+      gclid: pick("gclid"), gbraid: pick("gbraid"), wbraid: pick("wbraid"), fbc: pick("fbc"), fbp: pick("fbp"),
+    }),
+    ip: (() => { const v = pick("ip"); return v && /^[0-9a-fA-F:.]{3,45}$/.test(v) ? v : null; })(),
+    user_agent: clean(pick("user_agent"), 400),
+    page_url: safeUrl(pick("page_url", "referrer")),
     name: pick("name", "full_name", "your-name"),
     email: pick("email", "your-email"),
     phone: pick("phone", "telephone", "tel", "mobile"),
@@ -99,6 +105,7 @@ export function parseLead(body) {
   };
   if (lead.email && !isEmail(lead.email)) lead.email = null;
   if (!lead.name && !lead.email && !lead.phone && !lead.message) return null;
+  for (const k of Object.keys(lead)) if (lead[k] === undefined) lead[k] = null;
   return lead;
 }
 
@@ -409,4 +416,64 @@ export function toCsv(header, rows) {
     return `"${s.replace(/"/g, '""')}"`;
   };
   return [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+}
+
+
+/* ---------- conversions back to Google and Meta ---------- */
+
+/** Keep only well-formed click ids; anything odd is dropped rather than sent on. */
+export function clickIds({ gclid, gbraid, wbraid, fbc, fbp } = {}) {
+  const id = (v) => (typeof v === "string" && /^[A-Za-z0-9_\-]{10,300}$/.test(v) ? v : null);
+  return {
+    gclid: id(gclid), gbraid: id(gbraid), wbraid: id(wbraid),
+    fbc: typeof fbc === "string" && /^fb\.\d\.\d{10,16}\.[A-Za-z0-9_\-]{10,400}$/.test(fbc) ? fbc : null,
+    fbp: typeof fbp === "string" && /^fb\.\d\.\d{10,16}\.\d{5,25}$/.test(fbp) ? fbp : null,
+  };
+}
+
+const sha256 = (s) => createHash("sha256").update(s).digest("hex");
+
+/** Meta wants emails trimmed and lower-cased, then SHA-256 hashed. */
+export function hashEmail(email) {
+  const e = typeof email === "string" ? email.trim().toLowerCase() : "";
+  return isEmail(e) ? sha256(e) : null;
+}
+
+/** UK phone to digits with country code (447700900123), then SHA-256. */
+export function hashPhone(phone) {
+  const e164 = normaliseUkPhone(String(phone || "")) || (isE164(String(phone || "").replace(/[\s()-]/g, "")) ? String(phone).replace(/[\s()-]/g, "") : null);
+  return e164 ? sha256(e164.slice(1)) : null;
+}
+
+/** One Meta Conversions API "Lead" event for an enquiry. */
+export function metaLeadEvent(lead) {
+  const user = {};
+  const em = hashEmail(lead.email);
+  const ph = hashPhone(lead.phone);
+  if (em) user.em = [em];
+  if (ph) user.ph = [ph];
+  if (lead.fbc) user.fbc = lead.fbc;
+  if (lead.fbp) user.fbp = lead.fbp;
+  if (lead.ip) user.client_ip_address = lead.ip;
+  if (lead.user_agent) user.client_user_agent = lead.user_agent;
+  const isCall = lead.type === "call";
+  const ev = {
+    event_name: "Lead",
+    event_time: Math.floor(new Date(lead.received_at).getTime() / 1000),
+    event_id: `aa-lead-${lead.id}`,
+    action_source: isCall ? "phone_call" : "website",
+    user_data: user,
+    custom_data: { lead_type: isCall ? "call" : "form" },
+  };
+  if (!isCall && lead.page_url) ev.event_source_url = lead.page_url;
+  return ev;
+}
+
+/** Enough to match a person? Meta needs at least one identifier. */
+export const metaEventUsable = (ev) => Boolean(ev.user_data.em || ev.user_data.ph || ev.user_data.fbc || ev.user_data.fbp);
+
+/** Google offline conversion time, e.g. "2026-10-24 14:05:00+0000". */
+export function googleConversionTime(ts) {
+  const d = new Date(ts);
+  return `${d.toISOString().slice(0, 19).replace("T", " ")}+0000`;
 }

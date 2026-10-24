@@ -45,6 +45,15 @@ These run on their own once the settings below exist.
 - Optional settings that show the client the right ids in their Connect guide: `GOOGLE_MCC_ID` (your Google Ads manager account id) and `META_BUSINESS_ID` (your Meta Business id).
 - Enquiry sources: ad links ending `?utm_source=google&utm_campaign=boilers` are remembered and attached to the enquiry, so reports can show where each one came from.
 
+## Sending genuine enquiries back to Google and Facebook
+This is what makes the ad platforms bid for real customers rather than clicks.
+- **Client sites** must carry the click-capture script and hidden fields from `public/index.html` (search for "Remember where a visitor came from"). It records `gclid`/`gbraid`/`wbraid` (Google), `fbclid`/`_fbc`/`_fbp` (Facebook) and the page, and sends them with the enquiry. Turn on Google ads "auto-tagging" in each client account so links carry `gclid`.
+- **Spam review window:** enquiries are sent `CONVERSION_DELAY_HOURS` after they arrive (default 6), so anything you mark as spam first is never reported.
+- **Google:** in each client account create a conversion action: Goals > Conversions > New > Import > Other data sources or CRMs > Track conversions from clicks, named **Portal enquiry** (or the name saved for that client in Admin). The daily manager-account script (`docs/google-ads-script.js`) uploads them and confirms back to the portal.
+- **Facebook:** put the client's pixel (dataset) id in Admin. In Business settings > Data sources > Datasets, assign that dataset to the "Reader" system user. An hourly job sends a `Lead` event per enquiry through the Conversions API (calls are sent as phone-call leads, matched on the hashed phone number). Optional: `META_TEST_EVENT_CODE` to watch events arrive under Test events in Events Manager while testing, and `META_CAPI_TOKEN` if you use a separate token for this.
+- Admin > client shows how many were sent to each, and any errors.
+- Privacy: tell visitors in your privacy notice that enquiries are matched with Google and Meta advertising (hashed email and phone), and only load the Google tag and Meta pixel after cookie consent.
+
 ## Emails (report ready, Monday attention list)
 The portal emails a client's logins when a report is published, and emails the admins every Monday after the drafts are made. It uses Resend (resend.com, free for up to 3,000 emails a month).
 1. Create a Resend account and an API key.

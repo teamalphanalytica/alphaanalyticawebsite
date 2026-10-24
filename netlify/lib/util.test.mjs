@@ -51,6 +51,7 @@ test("parseLead handles Netlify webhook shape", () => {
   });
   assert.deepEqual(lead, {
     name: "Sam", email: "sam@example.com", phone: "07123", message: "Need a quote", source: "google", campaign: null,
+    gclid: null, gbraid: null, wbraid: null, fbc: null, fbp: null, ip: null, user_agent: null, page_url: null,
   });
 });
 
@@ -222,4 +223,50 @@ test("monthRange and toCsv", () => {
   assert.deepEqual(monthRange("2026-02"), ["2026-02-01", "2026-03-01"]);
   assert.equal(monthRange("2026-13"), null);
   assert.equal(toCsv(["a", "b"], [["=SUM(1)", 'say "hi"']]), '"a","b"\r\n"\'=SUM(1)","say ""hi"""');
+});
+
+import { clickIds, hashEmail, hashPhone, metaLeadEvent, metaEventUsable, googleConversionTime } from "./util.mjs";
+
+test("clickIds keeps good ids and drops junk", () => {
+  const r = clickIds({ gclid: "Cj0KCQjw_abc-123XYZ", fbc: "fb.1.1729771234567.IwAR2abcdefghij", fbp: "fb.1.1729771234567.1234567890", gbraid: "<script>" });
+  assert.equal(r.gclid, "Cj0KCQjw_abc-123XYZ");
+  assert.equal(r.fbc, "fb.1.1729771234567.IwAR2abcdefghij");
+  assert.equal(r.fbp, "fb.1.1729771234567.1234567890");
+  assert.equal(r.gbraid, null);
+  assert.equal(clickIds({ fbc: "fb.1.x.y" }).fbc, null);
+});
+
+test("hashing matches Meta's rules", () => {
+  // sha256("test@example.com")
+  assert.equal(hashEmail("  Test@Example.com "), "973dfe463ec85785f5f95af5ba3906eedb2d931c24e69824a89ea65dba4e813b");
+  assert.equal(hashEmail("nope"), null);
+  assert.equal(hashPhone("07700 900123"), hashPhone("+447700900123"));
+  assert.equal(hashPhone("abc"), null);
+});
+
+test("metaLeadEvent builds a deduplicated Lead", () => {
+  const ev = metaLeadEvent({ id: 7, type: "form", received_at: "2026-10-24T10:00:00Z", email: "a@b.co", phone: "07700900123",
+    fbc: "fb.1.1729771234567.IwAR2abcdefghij", ip: "1.2.3.4", user_agent: "UA", page_url: "https://x.co/" });
+  assert.equal(ev.event_name, "Lead");
+  assert.equal(ev.event_id, "aa-lead-7");
+  assert.equal(ev.event_time, Date.parse("2026-10-24T10:00:00Z") / 1000);
+  assert.equal(ev.action_source, "website");
+  assert.equal(ev.user_data.em.length, 1);
+  assert.equal(ev.event_source_url, "https://x.co/");
+  const call = metaLeadEvent({ id: 8, type: "call", received_at: "2026-10-24T10:00:00Z", phone: "+447700900123" });
+  assert.equal(call.action_source, "phone_call");
+  assert.ok(metaEventUsable(call));
+  assert.equal(metaEventUsable(metaLeadEvent({ id: 9, type: "form", received_at: "2026-10-24T10:00:00Z" })), false);
+});
+
+test("parseLead picks up click ids from a Netlify webhook", () => {
+  const l = parseLead({ data: { name: "Sam", email: "s@x.co", gclid: "Cj0KCQjw_abc-123XYZ", ip: "81.2.69.160", user_agent: "Mozilla", page_url: "https://site.co/boilers" } });
+  assert.equal(l.gclid, "Cj0KCQjw_abc-123XYZ");
+  assert.equal(l.ip, "81.2.69.160");
+  assert.equal(l.page_url, "https://site.co/boilers");
+  assert.equal(l.fbc, null);
+});
+
+test("googleConversionTime", () => {
+  assert.equal(googleConversionTime("2026-10-24T14:05:09.123Z"), "2026-10-24 14:05:09+0000");
 });

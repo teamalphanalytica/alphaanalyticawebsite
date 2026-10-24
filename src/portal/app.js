@@ -516,7 +516,7 @@ function viewAdmin() {
 }
 
 function viewAdminClient() {
-  const { client, users, steps, numbers, drafts, connections } = state.adminDetail;
+  const { client, users, steps, numbers, drafts, connections, conversions } = state.adminDetail;
   const hook = `${location.origin}/api/ingest?key=${client.ingest_key}`;
   return `<div class="pagehead"><div class="rowhead"><h1>${esc(client.name)}</h1>
       <span><button class="btn btn-ghost btn-small" data-action="admin-back" type="button">All clients</button>
@@ -550,6 +550,15 @@ function viewAdminClient() {
         ? `<dl class="kv">${INTAKE_LABELS.filter(([k]) => client.intake[k]).map(([k, label]) => `<dt>${esc(label)}</dt><dd>${esc(client.intake[k])}</dd>`).join("")}</dl>`
         : `<p class="muted">They haven't filled in their details yet.</p>`}</div>
 
+    <div class="panel"><h2>Enquiries sent back to Google and Facebook</h2>
+      <p class="muted small">Genuine enquiries (not marked spam) are reported back so the ad platforms learn which clicks become real customers. Last 30 days:</p>
+      <ul class="checks">
+        <li><b>Google:</b> ${conversions.google_sent} sent, from ${conversions.with_gclid} enquiries that came from a Google ad click${client.google_customer_id ? "" : " <span class=\"muted\">(add their Google customer id to switch on)</span>"}</li>
+        <li><b>Facebook:</b> ${conversions.meta_sent} sent${conversions.meta_failed ? `, <b>${conversions.meta_failed} failed</b> (${esc(conversions.last_meta_error || "")})` : ""}${client.meta_pixel_id ? "" : " <span class=\"muted\">(add their pixel id to switch on)</span>"}</li>
+      </ul>
+      <p><button class="btn btn-ghost btn-small" data-action="run-job" data-job="meta-conversions" type="button">Send waiting enquiries to Facebook now</button></p>
+    </div>
+
     <div class="panel"><h2>Weekly report drafts</h2>
       <p class="muted small">Drafted automatically every Monday. Add your notes, then publish so the client can see it.</p>
       ${drafts.length ? drafts.map((d) => `<form class="form" data-form="draft" data-id="${d.id}">
@@ -567,6 +576,8 @@ function viewAdminClient() {
       <form class="form" data-form="accounts" data-id="${client.id}">
         <div class="field"><label for="gc">Google Ads customer id</label><input id="gc" name="google_customer_id" value="${esc(client.google_customer_id || "")}" placeholder="123-456-7890"></div>
         <div class="field"><label for="mc">Meta ad account id</label><input id="mc" name="meta_ad_account_id" value="${esc(client.meta_ad_account_id || "")}" placeholder="1234567890"></div>
+        <div class="field"><label for="px">Facebook pixel (dataset) id, for sending enquiries back</label><input id="px" name="meta_pixel_id" value="${esc(client.meta_pixel_id || "")}" placeholder="1234567890"></div>
+        <div class="field"><label for="gn">Google conversion action name</label><input id="gn" name="google_conversion_name" value="${esc(client.google_conversion_name || "Portal enquiry")}" maxlength="100"></div>
         <div class="field"><label for="pp">Price per enquiry (£)</label><input id="pp" name="price_per_enquiry" type="number" min="0" step="0.01" value="${client.price_per_enquiry_pence == null ? "" : esc((client.price_per_enquiry_pence / 100).toFixed(2))}" placeholder="25.00"></div>
         <div class="field"><label for="cm">Shortest call that counts as an enquiry (seconds)</label><input id="cm" name="call_min_seconds" type="number" min="0" max="3600" value="${esc(client.call_min_seconds)}"></div>
         <button class="btn btn-primary" type="submit">Save</button>
@@ -661,7 +672,7 @@ async function loadAdminList() {
 
 async function loadAdminClient(id) {
   const [detail, portal] = await Promise.all([api(`/admin/clients/${id}`), api(`/portal?client=${id}`)]);
-  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, steps: portal.steps };
+  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, conversions: detail.conversions, steps: portal.steps };
 }
 
 /* ---------- events ---------- */
@@ -695,6 +706,11 @@ app.addEventListener("click", (e) => {
     return attempt(async () => {
       const r = await api(`/admin/run/${el.dataset.job}`, { method: "POST", body: {} });
       await loadAdminList();
+      if (el.dataset.job === "meta-conversions") {
+        if (state.adminDetail) await loadAdminClient(state.adminDetail.client.id);
+        return flash(r.skipped ? "err" : "ok", r.skipped ? "No Facebook token has been added yet."
+          : `Facebook: ${r.sent} sent, ${r.failed} failed, ${r.unusable} had nothing to match on. Enquiries newer than the review window wait until it passes.`);
+      }
       if (el.dataset.job === "attention-email") {
         return flash(r.sent ? "ok" : "err", r.sent ? "Sent. Check your inbox." : `Not sent: ${r.reason || r.error || "email isn't set up yet"}.`);
       }
@@ -876,7 +892,7 @@ app.addEventListener("submit", (e) => {
       return attempt(async () => {
         await api(`/admin/clients/${id}/accounts`, { method: "PATCH", body: {
           google_customer_id: f.google_customer_id, meta_ad_account_id: f.meta_ad_account_id, call_min_seconds: f.call_min_seconds,
-          price_per_enquiry: f.price_per_enquiry } });
+          price_per_enquiry: f.price_per_enquiry, meta_pixel_id: f.meta_pixel_id, google_conversion_name: f.google_conversion_name } });
         await loadAdminClient(id);
         flash("ok", "Saved.");
       });
