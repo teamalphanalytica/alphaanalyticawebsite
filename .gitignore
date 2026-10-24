@@ -1,1 +1,4 @@
 .netlify
+node_modules
+# built by `npm run build`
+public/portal/app.js
