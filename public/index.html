@@ -391,6 +391,12 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
         <input type="hidden" name="subject" value="New enquiry from Alpha Analytica website">
         <input type="hidden" name="source" value="">
         <input type="hidden" name="campaign" value="">
+        <input type="hidden" name="gclid" value="">
+        <input type="hidden" name="gbraid" value="">
+        <input type="hidden" name="wbraid" value="">
+        <input type="hidden" name="fbc" value="">
+        <input type="hidden" name="fbp" value="">
+        <input type="hidden" name="page_url" value="">
         <p class="hidden"><label>Don't fill this out: <input name="bot-field"></label></p>
         <div class="field"><label for="name">Your name</label><input id="name" name="name" autocomplete="name" required></div>
         <div class="field"><label for="business">Business name</label><input id="business" name="business" autocomplete="organization" required></div>
@@ -603,16 +609,28 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
 })();
 </script>
 <script>
-/* Remember where a visitor came from (ad links carry utm_source / utm_campaign) and send it with the enquiry */
+/* Remember where a visitor came from (ad links carry utm_*, gclid/gbraid/wbraid from Google, fbclid from Facebook)
+   and send it with the enquiry, so a genuine enquiry can be reported back to the ad platform that produced it. */
 (function () {
   try {
     var q = new URLSearchParams(location.search);
-    ['utm_source', 'utm_campaign'].forEach(function (k) { if (q.get(k)) sessionStorage.setItem(k, q.get(k).slice(0, 80)); });
+    ['utm_source', 'utm_campaign', 'gclid', 'gbraid', 'wbraid'].forEach(function (k) {
+      var v = q.get(k); if (v) sessionStorage.setItem('aa_' + k, v.slice(0, 300));
+    });
+    if (q.get('fbclid')) sessionStorage.setItem('aa_fbc', 'fb.1.' + Date.now() + '.' + q.get('fbclid').slice(0, 300));
+    var cookie = function (n) { var m = document.cookie.match('(?:^|; )' + n + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : ''; };
     var f = document.querySelector('form[name=contact]');
     if (!f) return;
     f.addEventListener('submit', function () {
-      if (f.elements.source) f.elements.source.value = sessionStorage.getItem('utm_source') || '';
-      if (f.elements.campaign) f.elements.campaign.value = sessionStorage.getItem('utm_campaign') || '';
+      var set = function (name, val) { if (f.elements[name]) f.elements[name].value = val || ''; };
+      set('source', sessionStorage.getItem('aa_utm_source'));
+      set('campaign', sessionStorage.getItem('aa_utm_campaign'));
+      set('gclid', sessionStorage.getItem('aa_gclid'));
+      set('gbraid', sessionStorage.getItem('aa_gbraid'));
+      set('wbraid', sessionStorage.getItem('aa_wbraid'));
+      set('fbc', cookie('_fbc') || sessionStorage.getItem('aa_fbc'));
+      set('fbp', cookie('_fbp'));
+      set('page_url', location.origin + location.pathname);
     });
   } catch (e) {}
 })();

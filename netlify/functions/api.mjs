@@ -14,9 +14,9 @@ import { getUser } from "@netlify/identity";
 import {
   LEAD_STATUSES, STEP_STATUSES, PLATFORMS, DEFAULT_STEPS, HANGUP_TWIML,
   clean, toInt, isEmail, isE164, isDay, safeUrl, slugify, parseLead, readBody, sameOrigin, parseAdminEmails,
-  safeEqual, normaliseUkPhone, connectionStates, cleanIntake, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
+  safeEqual, normaliseUkPhone, monthRange, toCsv, googleConversionTime, connectionStates, cleanIntake, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
 } from "../lib/util.mjs";
-import { syncMeta, draftWeeklyReports } from "../lib/jobs.mjs";
+import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions, conversionDelayHours } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
 
@@ -40,6 +40,14 @@ export default async (req) => {
     if (parts[0] === "ingest-ads" && parts.length === 1) {
       if (method !== "POST") return fail(405, "Use POST.");
       return await ingestAds(req, db);
+    }
+
+    // Google Ads script collects enquiries to upload as conversions, then confirms them (shared secret)
+    if (parts[0] === "conversions" && parts[1] === "google" && parts.length === 2 && method === "GET") {
+      return await googleConversionsExport(req, db);
+    }
+    if (parts[0] === "conversions" && parts[1] === "google" && parts[2] === "ack" && parts.length === 3 && method === "POST") {
+      return await googleConversionsAck(req, db);
     }
 
     // Twilio call webhooks (signed by Twilio, so no login)
@@ -180,8 +188,10 @@ async function ingest(req, url, db) {
   if (lead.spam) return json({ ok: true }); // pretend success so bots learn nothing
 
   await db.sql`
-    INSERT INTO leads (client_id, type, name, email, phone, message, source, campaign)
-    VALUES (${client.id}, 'form', ${lead.name}, ${lead.email}, ${lead.phone}, ${lead.message}, ${lead.source}, ${lead.campaign})`;
+    INSERT INTO leads (client_id, type, name, email, phone, message, source, campaign,
+                       gclid, gbraid, wbraid, fbc, fbp, ip, user_agent, page_url)
+    VALUES (${client.id}, 'form', ${lead.name}, ${lead.email}, ${lead.phone}, ${lead.message}, ${lead.source}, ${lead.campaign},
+            ${lead.gclid}, ${lead.gbraid}, ${lead.wbraid}, ${lead.fbc}, ${lead.fbp}, ${lead.ip}, ${lead.user_agent}, ${lead.page_url})`;
   return json({ ok: true }, 201);
 }
 
@@ -228,7 +238,7 @@ async function admin(req, db, p, method) {
   if (clientId && p.length === 2 && method === "GET") {
     const [client] = await db.sql`
       SELECT id, name, sector, website_url, preview_url, ingest_key,
-             google_customer_id, meta_ad_account_id, call_min_seconds, intake,
+             google_customer_id, meta_ad_account_id, call_min_seconds, intake, price_per_enquiry_pence, meta_pixel_id, google_conversion_name,
              google_last_push, meta_last_sync, meta_last_error
       FROM clients WHERE id = ${clientId}`;
     if (!client) return fail(404, "Business not found.");
@@ -238,7 +248,15 @@ async function admin(req, db, p, method) {
     const drafts = await db.sql`
       SELECT id, week_start, title, body FROM reports WHERE client_id = ${clientId} AND NOT published ORDER BY week_start DESC`;
     const connections = connectionStates(client, new Date().toISOString().slice(0, 10));
-    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections });
+    const [conv] = await db.sql`
+      SELECT COUNT(*) FILTER (WHERE google_sent_at IS NOT NULL)::int AS google_sent,
+             COUNT(*) FILTER (WHERE meta_sent_at IS NOT NULL)::int AS meta_sent,
+             COUNT(*) FILTER (WHERE meta_error IS NOT NULL AND meta_sent_at IS NULL)::int AS meta_failed,
+             COUNT(*) FILTER (WHERE gclid IS NOT NULL)::int AS with_gclid,
+             COUNT(*) FILTER (WHERE fbc IS NOT NULL OR fbp IS NOT NULL)::int AS with_fb,
+             MAX(meta_error) FILTER (WHERE meta_sent_at IS NULL) AS last_meta_error
+      FROM leads WHERE client_id = ${clientId} AND status <> 'spam' AND received_at > NOW() - INTERVAL '30 days'`;
+    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv });
   }
 
   // PATCH /api/admin/clients/:id/accounts  (ad account ids and the call-length rule)
@@ -248,9 +266,15 @@ async function admin(req, db, p, method) {
     const meta = clean(value?.meta_ad_account_id, 30)?.replace(/\D/g, "") || null;
     const minSeconds = toInt(value?.call_min_seconds, { min: 0, max: 3600 });
     if (minSeconds === null) return fail(400, "Call length must be a whole number of seconds.");
+    const pixel = clean(value?.meta_pixel_id, 30)?.replace(/\D/g, "") || null;
+    const convName = clean(value?.google_conversion_name, 100) || "Portal enquiry";
+    const priceText = clean(value?.price_per_enquiry, 12);
+    const price = priceText ? Math.round(Number(priceText) * 100) : null;
+    if (priceText && (!Number.isFinite(price) || price < 0 || price > 10_000_000)) return fail(400, "Price per enquiry must be an amount in pounds, like 25.");
     try {
       await db.sql`
-        UPDATE clients SET google_customer_id = ${google}, meta_ad_account_id = ${meta}, call_min_seconds = ${minSeconds}
+        UPDATE clients SET google_customer_id = ${google}, meta_ad_account_id = ${meta}, call_min_seconds = ${minSeconds},
+          price_per_enquiry_pence = ${price}, meta_pixel_id = ${pixel}, google_conversion_name = ${convName}
         WHERE id = ${clientId}`;
     } catch {
       return fail(409, "Another client already uses one of those account ids.");
@@ -327,19 +351,46 @@ async function admin(req, db, p, method) {
 
   // GET /api/admin/attention  (everything that needs a human, across all clients)
   if (p[0] === "attention" && p.length === 1 && method === "GET") {
+    return json({ items: await attentionItems(db) });
+  }
+
+  // GET /api/admin/billing?month=YYYY-MM  (billable enquiries per client)   &format=csv for a download
+  if (p[0] === "billing" && p.length === 1 && method === "GET") {
+    const url = new URL(req.url);
+    const month = url.searchParams.get("month") || new Date().toISOString().slice(0, 7);
+    const range = monthRange(month);
+    if (!range) return fail(400, "Month must look like 2026-10.");
     const rows = await db.sql`
-      SELECT c.id, c.name, c.website_url, c.created_at, c.google_customer_id, c.meta_ad_account_id,
-             c.google_last_push, c.meta_last_sync, c.meta_last_error,
-             (c.intake <> '{}'::jsonb) AS has_intake,
-             (SELECT MAX(received_at) FROM leads l WHERE l.client_id = c.id AND l.status <> 'spam') AS last_lead_at,
-             (SELECT COUNT(*)::int FROM calls k WHERE k.client_id = c.id AND k.started_at > NOW() - INTERVAL '7 days'
-                AND k.status IN ('failed', 'busy')) AS failed_calls_7d,
-             (SELECT COUNT(*)::int FROM reports r WHERE r.client_id = c.id AND NOT r.published) AS drafts
-      FROM clients c ORDER BY c.name`;
-    const today = new Date().toISOString().slice(0, 10);
-    const items = [];
-    for (const r of rows) for (const a of findAlerts(r, today)) items.push({ client_id: r.id, client: r.name, ...a });
-    return json({ items });
+      SELECT c.id, c.name, c.price_per_enquiry_pence AS price,
+        COUNT(l.id) FILTER (WHERE l.status <> 'spam')::int AS billable,
+        COUNT(l.id) FILTER (WHERE l.status = 'new')::int AS unreviewed,
+        COUNT(l.id) FILTER (WHERE l.status = 'spam')::int AS spam,
+        COUNT(l.id) FILTER (WHERE l.status <> 'spam' AND l.type = 'call')::int AS calls,
+        COUNT(l.id) FILTER (WHERE l.status <> 'spam' AND l.type = 'form')::int AS forms
+      FROM clients c
+      LEFT JOIN leads l ON l.client_id = c.id AND l.received_at >= ${range[0]} AND l.received_at < ${range[1]}
+      GROUP BY c.id ORDER BY c.name`;
+    const out = rows.map((r) => ({ ...r, total_pence: r.price == null ? null : r.price * r.billable }));
+    if (url.searchParams.get("format") === "csv") {
+      const csv = toCsv(
+        ["Client", "Month", "Form enquiries", "Call enquiries", "Billable enquiries", "Not yet reviewed", "Marked spam", "Price per enquiry (GBP)", "Total (GBP)"],
+        out.map((r) => [r.name, month, r.forms, r.calls, r.billable, r.unreviewed, r.spam,
+          r.price == null ? "" : (r.price / 100).toFixed(2), r.total_pence == null ? "" : (r.total_pence / 100).toFixed(2)]));
+      return new Response(csv, { headers: {
+        "content-type": "text/csv; charset=utf-8", "cache-control": "no-store",
+        "content-disposition": `attachment; filename="alpha-analytica-billing-${month}.csv"` } });
+    }
+    return json({ month, rows: out });
+  }
+
+  // POST /api/admin/run/meta-conversions  (send waiting enquiries to Facebook now)
+  if (p[0] === "run" && p[1] === "meta-conversions" && p.length === 2 && method === "POST") {
+    return json(await sendMetaConversions(db));
+  }
+
+  // POST /api/admin/run/attention-email  (send the Monday email now, for testing)
+  if (p[0] === "run" && p[1] === "attention-email" && p.length === 2 && method === "POST") {
+    return json(await sendAttentionEmail(db));
   }
 
   // POST /api/admin/run/meta-sync  and  /api/admin/run/weekly-reports  ("Run now" buttons)
@@ -362,7 +413,8 @@ async function admin(req, db, p, method) {
     const body = clean(value?.body, 20_000);
     if (!title || !body) return fail(400, "A title and report text are required.");
     await db.sql`UPDATE reports SET title = ${title}, body = ${body}, published = ${value?.publish === true} WHERE id = ${reportId}`;
-    return json({ ok: true });
+    const email = value?.publish === true ? await notifyReportPublished(db, reportId) : null;
+    return json({ ok: true, email });
   }
 
   // POST /api/admin/clients/:id/reports
@@ -372,8 +424,9 @@ async function admin(req, db, p, method) {
     const title = clean(value?.title, 160);
     const body = clean(value?.body, 20_000);
     if (!isDay(weekStart) || !title || !body) return fail(400, "A date, title and report text are required.");
-    await db.sql`INSERT INTO reports (client_id, week_start, title, body) VALUES (${clientId}, ${weekStart}, ${title}, ${body})`;
-    return json({ ok: true }, 201);
+    const [made] = await db.sql`INSERT INTO reports (client_id, week_start, title, body) VALUES (${clientId}, ${weekStart}, ${title}, ${body}) RETURNING id`;
+    const email = await notifyReportPublished(db, made.id);
+    return json({ ok: true, email }, 201);
   }
 
   // PATCH /api/admin/steps/:id
@@ -617,4 +670,41 @@ async function saveOwnAccounts(req, db, me) {
     return fail(409, "That account is already linked to another business. Please contact us.");
   }
   return json({ ok: true });
+}
+
+
+/* ---------- genuine enquiries back to Google as offline conversions ---------- */
+
+// The Google Ads script asks for enquiries with a Google click id that are past the spam-review window
+async function googleConversionsExport(req, db) {
+  const expected = Netlify.env.get("ADS_PUSH_KEY");
+  const key = clean(req.headers.get("x-push-key"), 200);
+  if (!expected || !key || !safeEqual(key, expected)) return fail(401, "Unauthorised.");
+  const delay = conversionDelayHours();
+  const rows = await db.sql`
+    SELECT l.id, l.gclid, l.received_at, c.google_customer_id, c.google_conversion_name
+    FROM leads l JOIN clients c ON c.id = l.client_id
+    WHERE l.gclid IS NOT NULL AND l.google_sent_at IS NULL AND l.status <> 'spam'
+      AND c.google_customer_id IS NOT NULL
+      AND l.received_at < NOW() - make_interval(hours => ${delay}::int)
+      AND l.received_at > NOW() - INTERVAL '60 days'
+    ORDER BY l.received_at LIMIT 2000`;
+  return json({
+    conversions: rows.map((r) => ({
+      id: r.id, customer_id: r.google_customer_id, gclid: r.gclid,
+      conversion_name: r.google_conversion_name, conversion_time: googleConversionTime(r.received_at),
+    })),
+  });
+}
+
+// ...and confirms the ones it uploaded, so they are never sent twice
+async function googleConversionsAck(req, db) {
+  const expected = Netlify.env.get("ADS_PUSH_KEY");
+  const key = clean(req.headers.get("x-push-key"), 200);
+  if (!expected || !key || !safeEqual(key, expected)) return fail(401, "Unauthorised.");
+  const { value } = await readBody(req, 100_000);
+  const ids = (Array.isArray(value?.ids) ? value.ids : []).map((v) => toInt(v, { min: 1 })).filter(Boolean).slice(0, 2000);
+  if (!ids.length) return json({ updated: 0 });
+  const done = await db.sql`UPDATE leads SET google_sent_at = NOW() WHERE id = ANY(${ids}) AND google_sent_at IS NULL RETURNING id`;
+  return json({ updated: done.length });
 }

@@ -90,6 +90,12 @@ export function parseLead(body) {
   };
 
   const lead = {
+    ...clickIds({
+      gclid: pick("gclid"), gbraid: pick("gbraid"), wbraid: pick("wbraid"), fbc: pick("fbc"), fbp: pick("fbp"),
+    }),
+    ip: (() => { const v = pick("ip"); return v && /^[0-9a-fA-F:.]{3,45}$/.test(v) ? v : null; })(),
+    user_agent: clean(pick("user_agent"), 400),
+    page_url: safeUrl(pick("page_url", "referrer")),
     name: pick("name", "full_name", "your-name"),
     email: pick("email", "your-email"),
     phone: pick("phone", "telephone", "tel", "mobile"),
@@ -99,6 +105,7 @@ export function parseLead(body) {
   };
   if (lead.email && !isEmail(lead.email)) lead.email = null;
   if (!lead.name && !lead.email && !lead.phone && !lead.message) return null;
+  for (const k of Object.keys(lead)) if (lead[k] === undefined) lead[k] = null;
   return lead;
 }
 
@@ -367,4 +374,106 @@ export function cleanIntake(input) {
     if (v) out[k] = v;
   }
   return out;
+}
+
+/* ---------- emails and billing ---------- */
+
+const htmlEscape = (s) => String(s ?? "").replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/** Email to a client: their weekly report is ready. Link only, so nothing private sits in an inbox. */
+export function reportReadyEmail({ clientName, title, portalUrl }) {
+  const subject = `Your weekly report is ready: ${clientName}`;
+  const text = `Hello,\n\nYour report "${title}" is ready to read in your Alpha Analytica portal:\n${portalUrl}\n\nThanks,\nAlpha Analytica`;
+  const html = `<p>Hello,</p><p>Your report <b>${htmlEscape(title)}</b> is ready to read in your Alpha Analytica portal.</p>
+<p><a href="${htmlEscape(portalUrl)}" style="background:#FFB703;color:#0A1128;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Open your portal</a></p><p>Thanks,<br>Alpha Analytica</p>`;
+  return { subject, text, html };
+}
+
+/** Monday email to the admins: everything that needs a human. */
+export function attentionEmail({ items, portalUrl }) {
+  const subject = items.length ? `Alpha Analytica: ${items.length} thing${items.length > 1 ? "s" : ""} need${items.length > 1 ? "" : "s"} your attention` : "Alpha Analytica: all clear this week";
+  const lines = items.map((i) => `- ${i.level === "bad" ? "PROBLEM" : "Check"}: ${i.client}: ${i.message}`);
+  const text = `${items.length ? lines.join("\n") : "Nothing needs your attention this week."}\n\nOpen Admin: ${portalUrl}`;
+  const html = `${items.length
+    ? `<ul>${items.map((i) => `<li><b>${i.level === "bad" ? "Problem" : "Check"}</b>, ${htmlEscape(i.client)}: ${htmlEscape(i.message)}</li>`).join("")}</ul>`
+    : "<p>Nothing needs your attention this week.</p>"}<p><a href="${htmlEscape(portalUrl)}">Open Admin</a></p>`;
+  return { subject, text, html };
+}
+
+/** "2026-10" to [first day, first day of next month]. */
+export function monthRange(month) {
+  if (typeof month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return null;
+  const [y, m] = month.split("-").map(Number);
+  const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  return [`${month}-01`, `${next}-01`];
+}
+
+/** Rows to CSV, quoting every cell and neutralising spreadsheet formulas. */
+export function toCsv(header, rows) {
+  const cell = (v) => {
+    let s = String(v ?? "");
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+  return [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+}
+
+
+/* ---------- conversions back to Google and Meta ---------- */
+
+/** Keep only well-formed click ids; anything odd is dropped rather than sent on. */
+export function clickIds({ gclid, gbraid, wbraid, fbc, fbp } = {}) {
+  const id = (v) => (typeof v === "string" && /^[A-Za-z0-9_\-]{10,300}$/.test(v) ? v : null);
+  return {
+    gclid: id(gclid), gbraid: id(gbraid), wbraid: id(wbraid),
+    fbc: typeof fbc === "string" && /^fb\.\d\.\d{10,16}\.[A-Za-z0-9_\-]{10,400}$/.test(fbc) ? fbc : null,
+    fbp: typeof fbp === "string" && /^fb\.\d\.\d{10,16}\.\d{5,25}$/.test(fbp) ? fbp : null,
+  };
+}
+
+const sha256 = (s) => createHash("sha256").update(s).digest("hex");
+
+/** Meta wants emails trimmed and lower-cased, then SHA-256 hashed. */
+export function hashEmail(email) {
+  const e = typeof email === "string" ? email.trim().toLowerCase() : "";
+  return isEmail(e) ? sha256(e) : null;
+}
+
+/** UK phone to digits with country code (447700900123), then SHA-256. */
+export function hashPhone(phone) {
+  const e164 = normaliseUkPhone(String(phone || "")) || (isE164(String(phone || "").replace(/[\s()-]/g, "")) ? String(phone).replace(/[\s()-]/g, "") : null);
+  return e164 ? sha256(e164.slice(1)) : null;
+}
+
+/** One Meta Conversions API "Lead" event for an enquiry. */
+export function metaLeadEvent(lead) {
+  const user = {};
+  const em = hashEmail(lead.email);
+  const ph = hashPhone(lead.phone);
+  if (em) user.em = [em];
+  if (ph) user.ph = [ph];
+  if (lead.fbc) user.fbc = lead.fbc;
+  if (lead.fbp) user.fbp = lead.fbp;
+  if (lead.ip) user.client_ip_address = lead.ip;
+  if (lead.user_agent) user.client_user_agent = lead.user_agent;
+  const isCall = lead.type === "call";
+  const ev = {
+    event_name: "Lead",
+    event_time: Math.floor(new Date(lead.received_at).getTime() / 1000),
+    event_id: `aa-lead-${lead.id}`,
+    action_source: isCall ? "phone_call" : "website",
+    user_data: user,
+    custom_data: { lead_type: isCall ? "call" : "form" },
+  };
+  if (!isCall && lead.page_url) ev.event_source_url = lead.page_url;
+  return ev;
+}
+
+/** Enough to match a person? Meta needs at least one identifier. */
+export const metaEventUsable = (ev) => Boolean(ev.user_data.em || ev.user_data.ph || ev.user_data.fbc || ev.user_data.fbp);
+
+/** Google offline conversion time, e.g. "2026-10-24 14:05:00+0000". */
+export function googleConversionTime(ts) {
+  const d = new Date(ts);
+  return `${d.toISOString().slice(0, 19).replace("T", " ")}+0000`;
 }

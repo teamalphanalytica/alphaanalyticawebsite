@@ -132,3 +132,18 @@ details.report summary::-webkit-details-marker{display:none}
 .kv dt{color:var(--slate);font-weight:600}
 .kv dd{margin:0;white-space:pre-wrap;word-break:break-word}
 @media (max-width:560px){.kv{grid-template-columns:1fr}.kv dd{margin-bottom:8px}}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:16px 0}
+.chart{margin:0;background:var(--chalk);border-radius:12px;padding:12px 14px}
+.chart figcaption{font-weight:600;font-size:.9rem;margin-bottom:6px;color:var(--ink)}
+.chart svg{width:100%;height:auto;display:block}
+.print-only{display:none}
+@media print{
+  body.printing header.bar,body.printing nav.tabs,body.printing .pagehead,body.printing .banner,body.printing .flash,body.printing .ok,body.printing .err{display:none!important}
+  body.printing main .panel{border:0;box-shadow:none;padding:0}
+  body.printing .report:not(.print-target),body.printing .no-print{display:none!important}
+  body.printing .print-only{display:block}
+  .print-head{font-size:1.1rem;margin:0 0 12px;padding-bottom:8px;border-bottom:3px solid #FFB703}
+  .report summary{list-style:none}
+  .chart{break-inside:avoid;background:#F3F5F9}
+  .tile{break-inside:avoid}
+}
