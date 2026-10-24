@@ -259,9 +259,18 @@ function viewLeads() {
     </div>`;
 }
 
+const CALL_STATUS = { completed: "Answered", "no-answer": "Not answered", busy: "Engaged", failed: "Failed", canceled: "Missed", ringing: "In progress" };
+
+function fmtDuration(sec) {
+  if (sec === null || sec === undefined) return "–";
+  return sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
+}
+
 function viewCalls() {
-  return `<div class="pagehead"><h1>Calls</h1><p>Every call from your ads and website, counted.</p></div>
-    <div class="soon"><h2>Call tracking isn't switched on yet</h2>
+  const d = state.data;
+  const head = `<div class="pagehead"><h1>Calls</h1><p>Every call from your ads and website, counted.</p></div>`;
+  if (!d.numbers.length && !d.calls.length) {
+    return head + `<div class="soon"><h2>Call tracking isn't switched on yet</h2>
       <p class="muted">Once it is, you'll get a tracking phone number that forwards to your own phone, and every call will be logged here. This is what you'll see:</p>
       <div class="cols">
         <div class="col"><b>When</b>Date and time of the call</div>
@@ -269,6 +278,35 @@ function viewCalls() {
         <div class="col"><b>How long</b>Length of the call</div>
         <div class="col"><b>Answered?</b>Whether you picked up</div>
       </div></div>`;
+  }
+  const cutoff = Date.now() - 30 * 86400000;
+  const recent = d.calls.filter((c) => new Date(c.started_at).getTime() >= cutoff);
+  const answered = recent.filter((c) => c.status === "completed").length;
+  const counted = recent.filter((c) => c.counted).length;
+  const min = d.client.call_min_seconds;
+  const rows = d.calls.map((c) => `<tr>
+      <td>${esc(fmtDate(c.started_at))}</td>
+      <td>${esc(c.from_number || "Withheld")}</td>
+      <td>${esc(c.label || "")}</td>
+      <td>${esc(CALL_STATUS[c.status] || c.status)}</td>
+      <td class="num">${esc(fmtDuration(c.duration_seconds))}</td>
+      <td>${c.counted ? `<span class="chip done">Counted</span>` : `<span class="muted">–</span>`}</td>
+    </tr>`).join("");
+  return head + `
+    <div class="tiles">
+      <div class="tile"><div class="n">${recent.length}</div><div class="l">calls in the last 30 days</div></div>
+      <div class="tile"><div class="n">${answered}</div><div class="l">answered</div></div>
+      <div class="tile"><div class="n">${counted}</div><div class="l">counted as enquiries</div></div>
+    </div>
+    <div class="panel"><h2>Your tracking numbers</h2>
+      ${d.numbers.length ? `<ul class="checks">${d.numbers.map((n) => `<li><b>${esc(n.number)}</b> <span class="muted">(${esc(n.label)}) forwards to ${esc(n.forward_to)}</span></li>`).join("")}</ul>` : `<p class="muted">No numbers yet.</p>`}
+      <p class="muted small mt">An answered call lasting at least ${esc(min)} seconds counts as an enquiry.</p>
+    </div>
+    <div class="panel"><h2>Call log</h2>
+      ${d.calls.length
+        ? `<div class="tablewrap"><table><thead><tr><th>When</th><th>Caller</th><th>Came from</th><th>Result</th><th class="num">Length</th><th>Enquiry</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="muted">No calls yet. They'll appear here as they come in.</p>`}
+    </div>`;
 }
 
 function viewAds() {
@@ -288,7 +326,7 @@ function viewAds() {
     <div class="panel">
       ${rows
         ? `<div class="tablewrap"><table><thead><tr><th>Platform</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Enquiries</th><th class="num">Cost per enquiry</th></tr></thead><tbody>${rows}</tbody></table></div>
-           <p class="muted small mt">Numbers are updated by Alpha Analytica each week.</p>`
+           <p class="muted small mt">Numbers are updated automatically where your ad account is connected, otherwise by Alpha Analytica each week.</p>`
         : `<p class="muted">Your ad results will appear here once your campaigns are live.</p>`}
     </div>`;
 }
@@ -334,7 +372,7 @@ function viewAdmin() {
 }
 
 function viewAdminClient() {
-  const { client, users, steps } = state.adminDetail;
+  const { client, users, steps, numbers } = state.adminDetail;
   const hook = `${location.origin}/api/ingest?key=${client.ingest_key}`;
   return `<div class="pagehead"><div class="rowhead"><h1>${esc(client.name)}</h1>
       <span><button class="btn btn-ghost btn-small" data-action="admin-back" type="button">All clients</button>
@@ -363,6 +401,26 @@ function viewAdminClient() {
         <button class="btn btn-primary" type="submit">Link login</button>
       </form></div>
 
+    <div class="panel"><h2>Ad accounts and calls</h2>
+      <p class="muted small">Ad results pushed in automatically are matched to this business by these ids. Digits only; dashes are ignored.</p>
+      <form class="form" data-form="accounts" data-id="${client.id}">
+        <div class="field"><label for="gc">Google Ads customer id</label><input id="gc" name="google_customer_id" value="${esc(client.google_customer_id || "")}" placeholder="123-456-7890"></div>
+        <div class="field"><label for="mc">Meta ad account id</label><input id="mc" name="meta_ad_account_id" value="${esc(client.meta_ad_account_id || "")}" placeholder="1234567890"></div>
+        <div class="field"><label for="cm">Shortest call that counts as an enquiry (seconds)</label><input id="cm" name="call_min_seconds" type="number" min="0" max="3600" value="${esc(client.call_min_seconds)}"></div>
+        <button class="btn btn-primary" type="submit">Save</button>
+      </form></div>
+
+    <div class="panel"><h2>Tracking phone numbers</h2>
+      <p class="muted small">Buy the number in Twilio first, then add it here with the client's real phone. Use international format, like +441612345678.</p>
+      <ul class="checks">${numbers.length ? numbers.map((n) => `<li><b>${esc(n.number)}</b> (${esc(n.label)}) to ${esc(n.forward_to)}
+        <button class="btn btn-ghost btn-small" data-action="remove-number" data-id="${n.id}" type="button">Remove</button></li>`).join("") : `<li class="muted">No numbers yet.</li>`}</ul>
+      <form class="form" data-form="add-number" data-id="${client.id}">
+        <div class="field"><label for="tn">Tracking number</label><input id="tn" name="number" required placeholder="+441612345678"></div>
+        <div class="field"><label for="tf">Forwards to (client's phone)</label><input id="tf" name="forward_to" required placeholder="+447700900123"></div>
+        <div class="field"><label for="tl">Where it is used</label><input id="tl" name="label" required maxlength="60" placeholder="Google ads"></div>
+        <button class="btn btn-primary" type="submit">Add number</button>
+      </form></div>
+
     <div class="panel"><h2>Ad results for one day</h2>
       <form class="form wide" data-form="stats" data-id="${client.id}">
         <div class="field"><label for="sd">Day</label><input id="sd" name="day" type="date" value="${todayKey()}" required></div>
@@ -384,7 +442,12 @@ function viewAdminClient() {
 
     <div class="panel"><h2>Sending enquiries here</h2>
       <p class="muted small">In the client site's Netlify project, open Forms → Form notifications → Add notification → Outgoing webhook, and paste this address. Keep it private: anyone with it can add enquiries.</p>
-      <p class="code">${esc(hook)}</p></div>`;
+      <p class="code">${esc(hook)}</p></div>
+
+    <div class="panel"><h2>Account-wide addresses</h2>
+      <p class="muted small">Same for every client. Set these once in Twilio and in your Google Ads script. See docs/SETUP.md.</p>
+      <p class="muted small">Twilio: when a call comes in (HTTP POST)</p><p class="code">${esc(location.origin)}/api/twilio/voice</p>
+      <p class="muted small">Ad results push address (send header x-push-key)</p><p class="code">${esc(location.origin)}/api/ingest-ads</p></div>`;
 }
 
 /* ---------- render ---------- */
@@ -431,7 +494,7 @@ async function loadAdminList() {
 
 async function loadAdminClient(id) {
   const [detail, portal] = await Promise.all([api(`/admin/clients/${id}`), api(`/portal?client=${id}`)]);
-  state.adminDetail = { client: detail.client, users: detail.users, steps: portal.steps };
+  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, steps: portal.steps };
 }
 
 /* ---------- events ---------- */
@@ -460,6 +523,15 @@ app.addEventListener("click", (e) => {
 
   if (a === "admin-open") return attempt(() => loadAdminClient(el.dataset.id));
   if (a === "admin-back") { state.adminDetail = null; return attempt(loadAdminList); }
+
+  if (a === "remove-number") {
+    if (!confirm("Remove this tracking number? Calls to it will stop being forwarded once it is removed here.")) return;
+    return attempt(async () => {
+      await api(`/admin/numbers/${el.dataset.id}`, { method: "DELETE" });
+      await loadAdminClient(state.adminDetail.client.id);
+      flash("ok", "Number removed.");
+    });
+  }
 
   if (a === "view-as") {
     return attempt(async () => {
@@ -558,6 +630,21 @@ app.addEventListener("submit", (e) => {
         await api(`/admin/clients/${id}/users`, { method: "POST", body: { email: f.email } });
         await loadAdminClient(id);
         flash("ok", "Login linked.");
+      });
+
+    case "accounts":
+      return attempt(async () => {
+        await api(`/admin/clients/${id}/accounts`, { method: "PATCH", body: {
+          google_customer_id: f.google_customer_id, meta_ad_account_id: f.meta_ad_account_id, call_min_seconds: f.call_min_seconds } });
+        await loadAdminClient(id);
+        flash("ok", "Saved.");
+      });
+
+    case "add-number":
+      return attempt(async () => {
+        await api(`/admin/clients/${id}/numbers`, { method: "POST", body: { number: f.number, forward_to: f.forward_to, label: f.label } });
+        await loadAdminClient(id);
+        flash("ok", "Number added. Now point it at the Twilio address shown at the bottom of this page.");
       });
 
     case "stats":

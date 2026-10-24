@@ -86,3 +86,50 @@ test("parseAdminEmails lowercases and trims", () => {
   assert.deepEqual(parseAdminEmails(" A@b.co, c@d.co ,,"), ["a@b.co", "c@d.co"]);
   assert.deepEqual(parseAdminEmails(undefined), []);
 });
+
+import { isE164, safeEqual, twilioSignature, validTwilioSignature, dialTwiml, countsAsEnquiry, parseAdRows } from "./util.mjs";
+
+test("isE164", () => {
+  assert.equal(isE164("+441612345678"), true);
+  assert.equal(isE164("01612345678"), false);
+  assert.equal(isE164("+0123"), false);
+});
+
+test("safeEqual", () => {
+  assert.equal(safeEqual("abc", "abc"), true);
+  assert.equal(safeEqual("abc", "abd"), false);
+});
+
+test("twilio signature matches Twilio's documented example", () => {
+  const url = "https://mycompany.com/myapp.php?foo=1&bar=2";
+  const params = { Digits: "1234", To: "+18005551212", From: "+14158675310", Caller: "+14158675310", CallSid: "CA1234567890ABCDE" };
+  assert.equal(twilioSignature(url, params, "12345"), "GvWf1cFY/Q7PnoempGyD5oXAezc=");
+  assert.equal(validTwilioSignature(url, params, "12345", "GvWf1cFY/Q7PnoempGyD5oXAezc="), true);
+  assert.equal(validTwilioSignature(url, params, "12345", "nope"), false);
+  assert.equal(validTwilioSignature(url, params, "", "x"), false);
+});
+
+test("dialTwiml escapes values", () => {
+  const x = dialTwiml({ forwardTo: "+44700", callerId: "+44161", actionUrl: "https://a.b/s?x=1&y=2" });
+  assert.match(x, /action="https:\/\/a\.b\/s\?x=1&amp;y=2"/);
+  assert.match(x, /<Number>\+44700<\/Number>/);
+});
+
+test("countsAsEnquiry", () => {
+  assert.equal(countsAsEnquiry("completed", 45, 30), true);
+  assert.equal(countsAsEnquiry("completed", 10, 30), false);
+  assert.equal(countsAsEnquiry("no-answer", 0, 0), false);
+});
+
+test("parseAdRows keeps good rows and reports bad ones", () => {
+  const { rows, errors } = parseAdRows([
+    { day: "2026-10-23", platform: "google", google_customer_id: "123-456-7890", spend: 12.34, impressions: 900, clicks: 40, conversions: 4.6 },
+    { day: "2026-13-40", platform: "google", google_customer_id: "1", spend: 1 },
+    { day: "2026-10-23", platform: "meta", meta_ad_account_id: "99", spend: -5 },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(errors, [1, 2]);
+  assert.equal(rows[0].ident, "1234567890");
+  assert.equal(rows[0].spend_pence, 1234);
+  assert.equal(rows[0].enquiries, 5);
+});
