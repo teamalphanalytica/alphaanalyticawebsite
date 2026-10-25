@@ -18,6 +18,8 @@ import {
 } from "../lib/util.mjs";
 import { stripeOn, billingMode, disputeDays, createPaymentSetup, runBilling, approveInvoice, discardInvoice, handleStripeEvent } from "../lib/billing.mjs";
 import { sendEmail } from "../lib/email.mjs";
+import { recordingOn, recordingNotice, retentionDays, handleRecordingCallback, startTranscript, summariseCall, fetchRecording } from "../lib/calls.mjs";
+import { overviewData, performanceData, feedData, callsData, callDetail } from "../lib/admin-data.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions, conversionDelayHours } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
@@ -62,6 +64,7 @@ export default async (req) => {
     if (parts[0] === "twilio" && parts.length === 2 && method === "POST") {
       if (parts[1] === "voice") return await twilioVoice(req, db);
       if (parts[1] === "status") return await twilioStatus(req, db);
+      if (parts[1] === "recording") return await twilioRecording(req, db);
     }
 
     const me = await whoami(db);
@@ -484,6 +487,38 @@ async function admin(req, db, p, method) {
     return json({ month, rows: out });
   }
 
+  // ---- command centre ----
+  if (p[0] === "overview" && p.length === 1 && method === "GET") {
+    const data = await overviewData(db);
+    return json({ ...data, system: { recording: recordingOn(), summaries: !!Netlify.env.get("ANTHROPIC_API_KEY"), retentionDays: retentionDays(), stripeOn: stripeOn() } });
+  }
+  if (p[0] === "performance" && p.length === 1 && method === "GET") return json(await performanceData(db));
+  if (p[0] === "feed" && p.length === 1 && method === "GET") return json(await feedData(db, Object.fromEntries(new URL(req.url).searchParams)));
+  if (p[0] === "calls" && p.length === 1 && method === "GET") return json(await callsData(db, Object.fromEntries(new URL(req.url).searchParams)));
+  if (p[0] === "calls" && p.length === 2 && method === "GET") {
+    const call = await callDetail(db, toInt(p[1], { min: 1 }));
+    return call ? json({ call }) : fail(404, "Call not found.");
+  }
+  // GET /api/admin/calls/:id/recording  (audio streamed through us, so it never has a public link)
+  if (p[0] === "calls" && p.length === 3 && p[2] === "recording" && method === "GET") {
+    const [call] = await db.sql`SELECT recording_sid FROM calls WHERE id = ${toInt(p[1], { min: 1 })}`;
+    if (!call?.recording_sid) return fail(404, "No recording for this call.");
+    const upstream = await fetchRecording(call.recording_sid, req.headers.get("range"));
+    if (!upstream.ok && upstream.status !== 206) return fail(502, "The recording isn't available right now.");
+    const headers = new Headers({ "content-type": "audio/mpeg", "cache-control": "private, no-store", "x-content-type-options": "nosniff" });
+    for (const h of ["content-length", "content-range", "accept-ranges"]) if (upstream.headers.get(h)) headers.set(h, upstream.headers.get(h));
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
+  // POST /api/admin/calls/:id/transcribe  (retry a transcript or summary that didn't finish)
+  if (p[0] === "calls" && p.length === 3 && p[2] === "transcribe" && method === "POST") {
+    const id = toInt(p[1], { min: 1 });
+    const [call] = await db.sql`SELECT transcript_sid, transcript_status, transcript FROM calls WHERE id = ${id}`;
+    if (!call) return fail(404, "Call not found.");
+    if (call.transcript) return json(await summariseCall(db, id));
+    if (call.transcript_status === "failed") await db.sql`UPDATE calls SET transcript_sid = NULL, transcript_status = NULL WHERE id = ${id}`;
+    return json(await startTranscript(db, id));
+  }
+
   // GET /api/admin/invoices?month=YYYY-MM  (what's been billed, and what's waiting for approval)
   if (p[0] === "invoices" && p.length === 1 && method === "GET") {
     const month = new URL(req.url).searchParams.get("month");
@@ -670,12 +705,29 @@ async function twilioVoice(req, db) {
     console.error("call log failed", e);
   }
 
+  // Recording is opt-in, and always comes with a spoken notice to the caller
+  const recording = recordingOn()
+    ? { recordingCallbackUrl: `${publicBase(req)}/api/twilio/recording`, notice: recordingNotice() }
+    : {};
   return twiml(dialTwiml({
     forwardTo: row.forward_to,
     callerId: to,
     actionUrl: `${publicBase(req)}/api/twilio/status`,
     timeout: 25,
+    ...recording,
   }));
+}
+
+// Twilio says a recording is ready: store it and start the transcript. Never fails the call flow.
+async function twilioRecording(req, db) {
+  const params = await twilioParams(req);
+  if (!params) return new Response("Forbidden", { status: 403 });
+  try {
+    await handleRecordingCallback(db, params);
+  } catch (e) {
+    console.error("recording callback failed", e);
+  }
+  return new Response(null, { status: 204 });
 }
 
 // The forwarded leg has finished: record how it went, and count it as an enquiry if it was long enough

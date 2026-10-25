@@ -17,6 +17,12 @@ const state = {
   adminClients: null,
   attention: null,
   billing: null, // { month, rows }
+  adminView: "overview", // overview | enquiries | calls | performance | clients | billing
+  ov: null, // admin overview data
+  feed: { leads: null, more: false, filters: {} }, // admin enquiry feed
+  callsList: { calls: null, more: false, filters: {} }, // admin call list
+  callOpen: null, // admin: the call being read
+  perf: null, // admin performance data
   invoices: null, // admin: invoices needing attention
   disputes: null, // admin: open enquiry disputes
   billingMonth: new Date().toISOString().slice(0, 7),
@@ -560,23 +566,231 @@ function invoicesPanel() {
   </div>`;
 }
 
+const ADMIN_VIEWS = [["overview", "Overview"], ["enquiries", "Enquiries"], ["calls", "Calls"], ["performance", "What's working"], ["clients", "Clients"], ["billing", "Billing"]];
+
+function ago(ts) {
+  if (!ts) return "never";
+  const m = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+  if (m < 2) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 60 * 24) return `${Math.floor(m / 60)} h ago`;
+  const d = Math.floor(m / 1440);
+  return d === 1 ? "yesterday" : `${d} days ago`;
+}
+const pctText = (a, b) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "–");
+const HEALTH_CHIP = { good: ["done", "Healthy"], watch: ["doing", "Watch"], bad: ["spam", "Needs you"], new: ["", "New"] };
+
+function trend(now, prev) {
+  if (!prev && !now) return `<span class="muted">–</span>`;
+  if (!prev) return `<span class="trend up">new</span>`;
+  const d = Math.round(((now - prev) / prev) * 100);
+  if (d === 0) return `<span class="muted">same</span>`;
+  return `<span class="trend ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"} ${Math.abs(d)}%</span>`;
+}
+
+function stackedChart(series) {
+  const w = 720, h = 170, top = 14, bottom = 26, left = 4;
+  const max = Math.max(3, ...series.map((d) => d.forms + d.calls));
+  const bw = (w - left * 2) / series.length;
+  const bars = series.map((d, i) => {
+    const x = left + i * bw + 1.5;
+    const fh = Math.round(((h - top - bottom) * d.forms) / max);
+    const ch = Math.round(((h - top - bottom) * d.calls) / max);
+    const base = h - bottom;
+    const label = i % 5 === 0 || i === series.length - 1 ? `<text x="${(x + bw / 2).toFixed(1)}" y="${h - 8}" text-anchor="middle" font-size="10" fill="#4F5B7A">${esc(d.day.slice(8))}/${esc(d.day.slice(5, 7))}</text>` : "";
+    return `<g><title>${esc(d.day)}: ${d.forms} form, ${d.calls} call</title>
+      <rect x="${x.toFixed(1)}" y="${base - fh}" width="${(bw - 3).toFixed(1)}" height="${fh}" fill="#FFB703" rx="2"></rect>
+      <rect x="${x.toFixed(1)}" y="${base - fh - ch}" width="${(bw - 3).toFixed(1)}" height="${ch}" fill="#0A1128" rx="2"></rect>${label}</g>`;
+  }).join("");
+  const label = `Enquiries per day, last 30 days: ${series.map((d) => `${d.day} ${d.forms + d.calls}`).join(", ")}`;
+  return `<figure class="chart wide"><figcaption>Enquiries per day, last 30 days
+      <span class="legend"><i style="background:#FFB703"></i>Forms <i style="background:#0A1128"></i>Calls</span></figcaption>
+    <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}"><line x1="0" y1="${h - bottom}" x2="${w}" y2="${h - bottom}" stroke="#D6DBE6"></line>${bars}</svg></figure>`;
+}
+
+function systemStrip(sys) {
+  if (!sys) return "";
+  const item = (on, name, hint) => `<li><span class="chip ${on ? "done" : ""}">${on ? "On" : "Off"}</span> <b>${esc(name)}</b>${on ? "" : ` <span class="muted small">${hint}</span>`}</li>`;
+  return `<div class="panel"><h2>Automation status</h2><ul class="checks launch">
+    ${item(sys.recording, "Call recording and transcripts", "Set CALL_RECORDING=on in Netlify to start recording calls (callers hear a notice first).")}
+    ${item(sys.summaries, "AI call summaries", "Add ANTHROPIC_API_KEY in Netlify so each call gets a summary and a genuine / not genuine verdict.")}
+    ${item(sys.stripeOn, "Automatic billing", "Add the Stripe keys (see docs/SETUP.md).")}
+  </ul>
+  <p class="mt"><button class="btn btn-ghost btn-small" data-action="run-job" data-job="meta-sync" type="button">Sync Facebook results now</button>
+    <button class="btn btn-ghost btn-small" data-action="run-job" data-job="weekly-reports" type="button">Draft last week's reports now</button>
+    <button class="btn btn-ghost btn-small" data-action="run-job" data-job="attention-email" type="button">Email me this list now</button></p></div>`;
+}
+
+function attentionPanel() {
+  const att = state.attention;
+  return `<div class="panel"><h2>Needs attention</h2>
+    ${att === null ? `<p class="muted">Checking…</p>` : att.length
+      ? `<ul class="checks launch">${att.map((a) => `<li><span class="chip ${a.level === "bad" ? "spam" : "doing"}">${a.level === "bad" ? "Problem" : "Check"}</span> <b>${esc(a.client)}</b> ${esc(a.message)}
+          <button class="btn btn-ghost btn-small" data-action="admin-open" data-id="${a.client_id}" type="button">Open</button></li>`).join("")}</ul>`
+      : `<p class="muted">Nothing needs your attention. 🎉</p>`}</div>`;
+}
+
+function viewAdminOverview() {
+  const o = state.ov;
+  if (!o) return `<p class="loading">Loading…</p>`;
+  const t = o.totals;
+  const tile = (n, l, extra = "") => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div>${extra}</div>`;
+  return `<div class="tiles">
+      ${tile(t.enquiries_today, "Enquiries today")}
+      ${tile(t.enq7, "Enquiries, last 7 days", `<div class="small">${trend(t.enq7, t.enqPrev7)} vs the week before</div>`)}
+      ${tile(t.enq30, "Enquiries, last 30 days", `<div class="small muted">${t.customers30} became customers</div>`)}
+      ${tile(pctText(t.answered30, t.calls30), "Calls answered", `<div class="small muted">${t.calls30} calls in 30 days</div>`)}
+      ${tile(money(t.spend30), "Ad spend, 30 days", `<div class="small muted">${t.cpe ? `${money(t.cpe)} per enquiry` : "no spend data yet"}</div>`)}
+      ${tile(money(t.month_revenue_pence), "Billable this month", `<div class="small muted">${t.open_disputes ? `${t.open_disputes} dispute${t.open_disputes === 1 ? "" : "s"} to review` : "estimate"}</div>`)}
+    </div>
+    ${o.insights.length ? `<div class="panel"><h2>What's happening</h2><ul class="checks launch">${o.insights.map((i) => `<li><span class="chip ${i.level === "good" ? "done" : i.level === "bad" ? "spam" : ""}">${i.level === "good" ? "Good" : i.level === "bad" ? "Watch out" : "Insight"}</span> ${esc(i.text)}</li>`).join("")}</ul></div>` : ""}
+    <div class="panel">${stackedChart(o.series)}</div>
+    ${attentionPanel()}
+    <div class="panel"><h2>Clients at a glance</h2>
+      ${o.clients.length ? `<div class="tablewrap"><table class="health"><thead><tr><th>Client</th><th>Health</th><th class="num">7 days</th><th class="num">30 days</th><th class="num">Calls answered</th><th class="num">Ad spend</th><th class="num">Cost per enquiry</th><th>Last enquiry</th><th class="num">Setup</th><th></th></tr></thead><tbody>
+        ${o.clients.map((c) => { const [cls, label] = HEALTH_CHIP[c.health.level];
+          return `<tr><td><b>${esc(c.name)}</b><div class="muted small">${esc(c.sector || "")}</div></td>
+          <td><span class="chip ${cls}">${label}</span>${c.health.reasons.length ? `<div class="small muted">${c.health.reasons.map(esc).join("<br>")}</div>` : ""}</td>
+          <td class="num">${c.enq7}<div class="small">${trend(c.enq7, c.enqPrev7)}</div></td><td class="num">${c.enq30}</td>
+          <td class="num">${c.calls30 ? `${pctText(c.answered30, c.calls30)}<div class="small muted">${c.calls30} calls</div>` : "–"}</td>
+          <td class="num">${c.spend30 ? money(c.spend30) : "–"}</td><td class="num">${c.cpe ? money(c.cpe) : "–"}</td>
+          <td>${esc(ago(c.last_enquiry_at))}</td><td class="num">${c.setupDone}/${c.setupTotal}</td>
+          <td><button class="btn btn-ghost btn-small" data-action="admin-open" data-id="${c.id}" type="button">Manage</button></td></tr>`; }).join("")}
+      </tbody></table></div>` : `<p class="muted">No clients yet. Add your first one under Clients.</p>`}
+    </div>
+    ${systemStrip(o.system)}`;
+}
+
+function clientOptions(selected) {
+  return `<option value="">All clients</option>${(state.adminClients || []).map((c) => `<option value="${c.id}" ${String(selected) === String(c.id) ? "selected" : ""}>${esc(c.name)}</option>`).join("")}`;
+}
+
+function viewAdminFeed() {
+  const f = state.feed;
+  const v = f.filters;
+  const sel = (name, opts, cur, id) => `<select id="${id}" name="${name}">${opts.map(([val, t]) => `<option value="${val}" ${cur === val ? "selected" : ""}>${t}</option>`).join("")}</select>`;
+  return `<div class="panel"><h2>Every enquiry, every client</h2>
+    <form class="form wide filters" data-form="feed-filter">
+      <div class="field"><label for="ff_c">Client</label><select id="ff_c" name="client">${clientOptions(v.client)}</select></div>
+      <div class="field"><label for="ff_t">Type</label>${sel("type", [["", "Forms and calls"], ["form", "Forms"], ["call", "Calls"]], v.type || "", "ff_t")}</div>
+      <div class="field"><label for="ff_s">Outcome</label>${sel("status", [["", "Any"], ["new", "New"], ["qualified", "Good"], ["customer", "Customers"], ["spam", "Spam"]], v.status || "", "ff_s")}</div>
+      <div class="field"><label for="ff_src">Source</label><input id="ff_src" name="source" value="${esc(v.source || "")}" placeholder="google, facebook…"></div>
+      <div class="field"><label for="ff_q">Search</label><input id="ff_q" name="q" value="${esc(v.q || "")}" placeholder="name, phone, words in the message"></div>
+      <button class="btn btn-primary" type="submit">Filter</button>
+    </form></div>
+    ${f.leads === null ? `<p class="loading">Loading…</p>` : f.leads.length ? `<div class="feed">${f.leads.map((l) => `
+      <article class="lead-card ${l.status === "spam" ? "is-spam" : ""}">
+        <header><span class="chip">${esc(l.client)}</span> <span class="muted small">${esc(fmtDate(l.received_at))} · ${esc(ago(l.received_at))}</span>
+          <span class="chip ${l.type === "call" ? "doing" : ""}">${l.type === "call" ? "Call" : "Form"}</span>
+          ${l.has_gclid ? `<span class="chip">Google click</span>` : ""}${l.has_fb ? `<span class="chip">Facebook</span>` : ""}
+          ${l.dispute_state === "open" ? `<span class="chip spam">Disputed</span>` : ""}</header>
+        <h3>${esc(l.name || l.phone || "Unknown caller")}</h3>
+        <p class="muted small">${esc([l.phone, l.email].filter(Boolean).join(" · "))}${l.source ? ` · ${esc(l.source)}` : ""}${l.campaign ? ` · ${esc(l.campaign)}` : ""}</p>
+        ${l.call_summary ? `<p class="callsum"><b>Call summary:</b> ${esc(l.call_summary)}</p>` : ""}
+        ${l.message && l.type !== "call" ? `<div class="lead-msg">${esc(l.message)}</div>` : ""}
+        <footer><label class="sr-only" for="fs${l.id}">Outcome</label>
+          <select id="fs${l.id}" class="lead-select" data-action="admin-lead-status" data-id="${l.id}">
+            ${Object.entries(STATUS_LABEL).map(([val, t]) => `<option value="${val}" ${l.status === val ? "selected" : ""}>${t}</option>`).join("")}</select>
+          ${l.call_id ? `<button class="btn btn-ghost btn-small" data-action="call-open" data-id="${l.call_id}" type="button">${l.has_transcript ? "Read the call" : "Call details"}${l.duration_seconds ? ` (${fmtDuration(l.duration_seconds)})` : ""}</button>` : ""}
+          <button class="btn btn-ghost btn-small" data-action="admin-open" data-id="${l.client_id}" type="button">Open client</button></footer>
+      </article>`).join("")}</div>
+      ${f.more ? `<p class="center"><button class="btn btn-ghost" data-action="feed-more" type="button">Load more</button></p>` : ""}`
+      : `<div class="panel"><p class="muted">No enquiries match. Try clearing the filters.</p></div>`}`;
+}
+
+const OUTCOME_TEXT = { booked: "Booked or agreed", quote_requested: "Wants a quote", information: "Asked for information", not_genuine: "Not genuine", missed_or_voicemail: "Missed or voicemail", other: "Other" };
+const OUTCOME_CLASS = { booked: "done", quote_requested: "done", information: "", not_genuine: "spam", missed_or_voicemail: "spam", other: "" };
+
+function callDetailPanel() {
+  const c = state.callOpen;
+  if (!c) return "";
+  const sum = c.summary;
+  let body;
+  if (c.transcript && c.transcript.length) {
+    body = `<div class="transcript" role="log" aria-label="Call transcript">${c.transcript.map((t) => `<div class="bubble ${t.speaker}"><span class="spk">${t.speaker === "caller" ? "Caller" : "Business"}</span>${esc(t.text)}</div>`).join("")}</div>`;
+  } else if (c.media_deleted_at) {
+    body = `<p class="muted">The recording and transcript were deleted after ${esc(String(state.ov?.system?.retentionDays || 90))} days. The summary above is kept.</p>`;
+  } else if (c.transcript_status === "failed") {
+    body = `<p class="muted">The transcript failed${c.transcript_error ? ` (${esc(c.transcript_error)})` : ""}. <button class="btn btn-ghost btn-small" data-action="call-retry" data-id="${c.id}" type="button">Try again</button></p>`;
+  } else if (c.has_recording) {
+    body = `<p class="muted">Transcribing… this usually takes a few minutes. <button class="btn btn-ghost btn-small" data-action="call-open" data-id="${c.id}" type="button">Refresh</button></p>`;
+  } else {
+    body = `<p class="muted">${state.ov?.system?.recording === false ? "Call recording is switched off, so there's no recording or transcript." : "No recording for this call (it may have been unanswered or too short)."}</p>`;
+  }
+  return `<div class="panel callpanel"><div class="rowhead"><h2>Call from ${esc(c.from_number || "unknown")}</h2>
+      <button class="btn btn-ghost btn-small" data-action="call-close" type="button">Close</button></div>
+    <p class="muted small"><b>${esc(c.client)}</b> · ${esc(fmtDate(c.started_at))} · ${esc(c.label || "")} · ${c.duration_seconds != null ? fmtDuration(c.duration_seconds) : "–"} · ${esc(c.status)}</p>
+    ${c.has_recording ? `<audio controls preload="none" src="/api/admin/calls/${Number(c.id)}/recording"></audio>` : ""}
+    ${sum ? `<div class="sumbox"><p><span class="chip ${OUTCOME_CLASS[sum.outcome] || ""}">${esc(OUTCOME_TEXT[sum.outcome] || "Other")}</span>
+        <span class="chip ${sum.genuine ? "done" : "spam"}">${sum.genuine ? "Genuine" : "Not genuine"}</span>
+        <span class="chip">${esc(sum.sentiment)}</span></p>
+      <p>${esc(sum.summary)}</p>${sum.follow_up ? `<p class="muted"><b>Next:</b> ${esc(sum.follow_up)}</p>` : ""}</div>` : ""}
+    ${body}</div>`;
+}
+
+function viewAdminCalls() {
+  const l = state.callsList;
+  const v = l.filters;
+  const sel = (name, opts, cur, id) => `<select id="${id}" name="${name}">${opts.map(([val, t]) => `<option value="${val}" ${cur === val ? "selected" : ""}>${t}</option>`).join("")}</select>`;
+  return `${callDetailPanel()}
+    <div class="panel"><h2>Calls</h2>
+      ${state.ov && state.ov.system && !state.ov.system.recording ? `<p class="notice">Call recording is off. You'll see who rang and for how long. Set <b>CALL_RECORDING=on</b> in Netlify to also get recordings, transcripts and summaries.</p>` : ""}
+      <form class="form wide filters" data-form="calls-filter">
+        <div class="field"><label for="cf_c">Client</label><select id="cf_c" name="client">${clientOptions(v.client)}</select></div>
+        <div class="field"><label for="cf_s">Result</label>${sel("status", [["", "Any"], ["completed", "Answered"], ["no-answer", "Not answered"], ["busy", "Engaged"], ["failed", "Failed"]], v.status || "", "cf_s")}</div>
+        <div class="field"><label for="cf_o">Verdict</label>${sel("outcome", [["", "Any"], ...Object.entries(OUTCOME_TEXT)], v.outcome || "", "cf_o")}</div>
+        <div class="field"><label for="cf_q">Search</label><input id="cf_q" name="q" value="${esc(v.q || "")}" placeholder="number, or words said on the call"></div>
+        <button class="btn btn-primary" type="submit">Filter</button>
+      </form>
+      ${l.calls === null ? `<p class="loading">Loading…</p>` : l.calls.length ? `<div class="tablewrap"><table><thead><tr><th>When</th><th>Client</th><th>Caller</th><th class="num">Length</th><th>Result</th><th>What happened</th><th></th></tr></thead><tbody>
+        ${l.calls.map((c) => `<tr><td>${esc(fmtDate(c.started_at))}<div class="small muted">${esc(ago(c.started_at))}</div></td><td><b>${esc(c.client)}</b></td><td>${esc(c.from_number || "–")}</td>
+          <td class="num">${c.duration_seconds != null ? fmtDuration(c.duration_seconds) : "–"}</td>
+          <td><span class="chip ${c.status === "completed" ? "done" : "spam"}">${esc(CALL_STATUS[c.status] || c.status)}</span></td>
+          <td>${c.summary ? `<span class="chip ${OUTCOME_CLASS[c.summary.outcome] || ""}">${esc(OUTCOME_TEXT[c.summary.outcome] || "Other")}</span> <span class="small">${esc(c.summary.summary)}</span>`
+            : c.has_transcript ? `<span class="muted small">Transcript ready</span>` : c.has_recording ? `<span class="muted small">Transcribing…</span>` : `<span class="muted small">–</span>`}</td>
+          <td><button class="btn btn-ghost btn-small" data-action="call-open" data-id="${c.id}" type="button">Open</button></td></tr>`).join("")}</tbody></table></div>
+        ${l.more ? `<p class="center"><button class="btn btn-ghost" data-action="calls-more" type="button">Load more</button></p>` : ""}`
+        : `<p class="muted">No calls match.</p>`}
+    </div>`;
+}
+
+function viewAdminPerformance() {
+  const p = state.perf;
+  if (!p) return `<p class="loading">Loading…</p>`;
+  const cheapest = Math.min(...p.channels.filter((c) => c.cost_per_enquiry_pence).map((c) => c.cost_per_enquiry_pence));
+  const dearest = Math.max(...p.channels.filter((c) => c.cost_per_enquiry_pence).map((c) => c.cost_per_enquiry_pence));
+  const cpeChip = (v) => (v ? `<span class="chip ${v === cheapest && cheapest !== dearest ? "done" : v === dearest && cheapest !== dearest ? "spam" : ""}">${money(v)}</span>` : "–");
+  const maxEnq = Math.max(1, ...p.channels.map((c) => c.enquiries));
+  return `<div class="panel"><h2>Where enquiries come from (30 days)</h2>
+      ${p.channels.length ? `<div class="tablewrap"><table><thead><tr><th>Source</th><th>Enquiries</th><th class="num">Ad spend</th><th class="num">Cost per enquiry</th><th class="num">Good</th><th class="num">Customers</th><th class="num">Spam</th></tr></thead><tbody>
+      ${p.channels.map((c) => `<tr><td><b>${esc(c.name)}</b></td>
+        <td><div class="bar"><span style="width:${Math.round((c.enquiries / maxEnq) * 100)}%"></span></div>${c.enquiries}</td>
+        <td class="num">${c.spend_pence ? money(c.spend_pence) : "–"}</td><td class="num">${cpeChip(c.cost_per_enquiry_pence)}</td>
+        <td class="num">${c.qualified}</td><td class="num">${c.customers}</td><td class="num">${c.spam_pct ? `<span class="${c.spam_pct >= 25 ? "bad-text" : ""}">${c.spam_pct}%</span>` : "0%"}</td></tr>`).join("")}</tbody></table></div>
+      <p class="muted small">Cost per enquiry is a channel's ad spend divided by real enquiries recorded here, so it matches what clients are billed for. Green is the cheapest channel, red the dearest.</p>`
+      : `<p class="muted">No enquiries yet.</p>`}</div>
+    <div class="panel"><h2>Clients, best to worst (30 days)</h2>
+      <div class="tablewrap"><table><thead><tr><th>Client</th><th class="num">Enquiries</th><th class="num">Ad spend</th><th class="num">Cost per enquiry</th><th class="num">Became customers</th><th class="num">Spam</th></tr></thead><tbody>
+      ${p.clients.map((c) => `<tr><td><b>${esc(c.name)}</b></td><td class="num">${c.enquiries}</td><td class="num">${c.spend_pence ? money(c.spend_pence) : "–"}</td>
+        <td class="num">${c.cost_per_enquiry_pence ? money(c.cost_per_enquiry_pence) : "–"}</td><td class="num">${c.customers} (${c.customer_pct}%)</td><td class="num">${c.spam_pct}%</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="panel"><h2>Campaigns</h2>
+      ${p.campaigns.length ? `<div class="tablewrap"><table><thead><tr><th>Campaign</th><th class="num">Enquiries</th><th class="num">Good</th><th class="num">Customers</th><th class="num">Spam</th></tr></thead><tbody>
+      ${p.campaigns.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${c.enquiries}</td><td class="num">${c.qualified}</td><td class="num">${c.customers}</td><td class="num">${c.spam}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">Campaign names appear here when your ads pass them through (the utm_campaign in the link).</p>`}</div>
+    ${p.call_outcomes.length ? `<div class="panel"><h2>What callers wanted</h2><ul class="checks launch">${p.call_outcomes.map((o) => `<li><span class="chip ${OUTCOME_CLASS[o.outcome] || ""}">${esc(OUTCOME_TEXT[o.outcome] || "Other")}</span> ${o.n} call${o.n === 1 ? "" : "s"}</li>`).join("")}</ul></div>` : ""}`;
+}
+
 function viewAdmin() {
   if (state.adminDetail) return viewAdminClient();
   const list = state.adminClients;
-  const att = state.attention;
-  return `<div class="pagehead"><h1>Admin</h1><p>Your clients, their progress and their results.</p></div>
-    <div class="panel"><h2>Needs attention</h2>
-      ${att === null ? `<p class="muted">Checking…</p>` : att.length
-        ? `<ul class="checks">${att.map((a) => `<li><span class="chip ${a.level === "bad" ? "doing" : "todo"}">${a.level === "bad" ? "Problem" : "Check"}</span> <b>${esc(a.client)}</b>: ${esc(a.message)}
-            <button class="btn btn-ghost btn-small" data-action="admin-open" data-id="${a.client_id}" type="button">Open</button></li>`).join("")}</ul>`
-        : `<p class="muted">Nothing needs your attention.</p>`}
-      <p class="mt"><button class="btn btn-ghost btn-small" data-action="run-job" data-job="meta-sync" type="button">Sync Facebook results now</button>
-        <button class="btn btn-ghost btn-small" data-action="run-job" data-job="weekly-reports" type="button">Draft last week's reports now</button>
-        <button class="btn btn-ghost btn-small" data-action="run-job" data-job="attention-email" type="button">Email me this list now</button></p>
-    </div>
-    ${billingPanel()}
-    ${invoicesPanel()}
-    <div class="panel"><h2>Clients</h2>
+  const nav = `<nav class="subtabs" aria-label="Admin sections">${ADMIN_VIEWS.map(([id, label]) => `<button class="subtab" data-action="admin-view" data-view="${id}" ${state.adminView === id ? 'aria-current="page"' : ""} type="button">${label}</button>`).join("")}</nav>`;
+  let body = "";
+  if (state.adminView === "overview") body = viewAdminOverview();
+  else if (state.adminView === "enquiries") body = viewAdminFeed();
+  else if (state.adminView === "calls") body = viewAdminCalls();
+  else if (state.adminView === "performance") body = viewAdminPerformance();
+  else if (state.adminView === "billing") body = `${billingPanel()}${invoicesPanel()}`;
+  else body = `<div class="panel"><h2>Clients</h2>
       ${list === null ? `<p class="muted">Loading…</p>` : list.length
         ? `<div class="tablewrap"><table><thead><tr><th>Business</th><th>Sector</th><th class="num">Build</th><th class="num">Enquiries (30 days)</th><th></th></tr></thead><tbody>
             ${list.map((c) => `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.sector || "")}</td>
@@ -588,6 +802,7 @@ function viewAdmin() {
     <div class="panel"><h2>Add a client</h2>
       <p class="muted small">Fill this in once. We check everything before anything is created, make their login, and show you exactly what's left to do.</p>
       ${newClientForm()}</div>`;
+  return `<div class="pagehead"><h1>Admin</h1><p>Every client, every enquiry and every call in one place.</p></div>${nav}${body}`;
 }
 
 
@@ -791,18 +1006,42 @@ async function enterPortal() {
   if (state.tab === "admin") await loadAdminList();
 }
 
+const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== "" && v != null)).toString();
+
+/** Load whatever the current admin tab needs. Called on entering admin, on switching tabs, and after any change. */
 async function loadAdminList() {
   state.adminClients = null;
   state.attention = null;
   state.billing = null;
   state.invoices = null;
   state.disputes = null;
+  const view = state.adminView;
   const [list, att, bill, inv, dis] = await Promise.all([api("/admin/clients"), api("/admin/attention"), api(`/admin/billing?month=${encodeURIComponent(state.billingMonth)}`), api("/admin/invoices"), api("/admin/disputes")]);
   state.adminClients = list.clients;
   state.attention = att.items;
   state.billing = bill;
   state.invoices = inv;
   state.disputes = dis;
+  if (view === "overview" || view === "calls") state.ov = await api("/admin/overview");
+  if (view === "enquiries") await loadFeed(false);
+  if (view === "calls") await loadCalls(false);
+  if (view === "performance") state.perf = await api("/admin/performance");
+}
+
+async function loadFeed(append) {
+  const f = state.feed;
+  const before = append && f.leads && f.leads.length ? f.leads[f.leads.length - 1].id : "";
+  const r = await api(`/admin/feed?${qs({ ...f.filters, before })}`);
+  f.leads = append ? [...f.leads, ...r.leads] : r.leads;
+  f.more = r.more;
+}
+
+async function loadCalls(append) {
+  const l = state.callsList;
+  const before = append && l.calls && l.calls.length ? l.calls[l.calls.length - 1].id : "";
+  const r = await api(`/admin/calls?${qs({ ...l.filters, before })}`);
+  l.calls = append ? [...l.calls, ...r.calls] : r.calls;
+  l.more = r.more;
 }
 
 async function loadAdminClient(id) {
@@ -895,6 +1134,34 @@ app.addEventListener("click", (e) => {
     });
   }
 
+  if (a === "admin-view") {
+    state.adminView = el.dataset.view;
+    state.adminDetail = null;
+    return attempt(loadAdminList);
+  }
+  if (a === "feed-more") return attempt(() => loadFeed(true));
+  if (a === "calls-more") return attempt(() => loadCalls(true));
+  if (a === "call-open") {
+    return attempt(async () => {
+      const r = await api(`/admin/calls/${el.dataset.id}`);
+      state.callOpen = r.call;
+      state.adminView = "calls";
+      state.adminDetail = null;
+      state.tab = "admin";
+      if (!state.callsList.calls) await loadAdminList();
+      if (!state.ov) state.ov = await api("/admin/overview");
+      window.scrollTo({ top: 0 });
+    });
+  }
+  if (a === "call-close") { state.callOpen = null; return render(); }
+  if (a === "call-retry") {
+    return attempt(async () => {
+      await api(`/admin/calls/${el.dataset.id}/transcribe`, { method: "POST", body: {} });
+      state.callOpen = (await api(`/admin/calls/${el.dataset.id}`)).call;
+      flash("ok", "Asked Twilio to try again. It can take a few minutes.");
+    });
+  }
+
   if (a === "payment-setup") {
     return attempt(async () => {
       const r = await api("/portal/payment-setup", { method: "POST", body: {} });
@@ -981,6 +1248,14 @@ app.addEventListener("change", (e) => {
       flash("ok", "Saved.");
     });
   }
+  if (el.dataset.action === "admin-lead-status") {
+    attempt(async () => {
+      await api(`/leads/${id}`, { method: "PATCH", body: { status: el.value } });
+      const lead = state.feed.leads && state.feed.leads.find((l) => String(l.id) === id);
+      if (lead) lead.status = el.value;
+      flash("ok", "Saved.");
+    });
+  }
   if (el.dataset.action === "dispute") {
     if (!el.value) return;
     attempt(async () => {
@@ -1055,6 +1330,14 @@ app.addEventListener("submit", (e) => {
           throw e;
         }
       });
+
+    case "feed-filter":
+      state.feed.filters = { client: f.client, type: f.type, status: f.status, source: f.source, q: f.q };
+      return attempt(() => loadFeed(false));
+
+    case "calls-filter":
+      state.callsList.filters = { client: f.client, status: f.status, outcome: f.outcome, q: f.q };
+      return attempt(() => loadCalls(false));
 
     case "client-links":
       return attempt(async () => {

@@ -100,3 +100,15 @@ Everything is built and sits idle until you add the keys. Start in Stripe **test
 How it runs: each client adds a card or Direct Debit once in their Billing tab. They can dispute an enquiry within 7 days. From the 8th, a daily job invoices last month once per client. It waits for any open disputes, and never double-bills. In `approve` mode each invoice is a draft until you press **Approve and send** in Admin. Failed payments, drafts and disputes show on your Needs attention list.
 
 To test: set a price for a test client, have them save the Stripe test card 4242 4242 4242 4242, then press **Create last month's invoices now** in Admin.
+
+## Call recording, transcripts and summaries
+
+Off until you switch it on. Callers always hear a notice first ("This call may be recorded..."), which UK rules expect. Change the wording with `CALL_NOTICE`.
+
+1. In Twilio, Voice Intelligence must be enabled on your account (Console > Voice Intelligence). The first recorded call creates the transcription service for you.
+2. In Netlify set `CALL_RECORDING=on`.
+3. Optional: set `ANTHROPIC_API_KEY` so each call also gets a summary and a genuine / not genuine verdict. `SUMMARY_MODEL` picks the model (a small, cheap one by default).
+4. Optional: `CALL_RETENTION_DAYS` (default 90). After that the audio and transcript are deleted from Twilio and from the portal; the short summary stays.
+5. If Twilio rejects the language, set `TRANSCRIPT_LANGUAGE` (default `en-GB`; try `en-US`). It can't be changed once the service exists, so delete the `alpha-analytica-calls` service in Twilio first.
+
+Check the first real call: in the transcript "Caller" is the person who rang and "Business" is the client's phone. Recordings and transcripts are only visible to admins, from Admin > Calls. Your privacy notice already covers this; tell clients in your agreement that calls to their tracking number are recorded.
