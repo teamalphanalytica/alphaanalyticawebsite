@@ -20,7 +20,7 @@ import { stripeOn, billingMode, disputeDays, createPaymentSetup, runBilling, app
 import { sendEmail } from "../lib/email.mjs";
 import { recordingOn, recordingNotice, retentionDays, handleRecordingCallback, startTranscript, summariseCall, fetchRecording } from "../lib/calls.mjs";
 import { overviewData, performanceData, feedData, callsData, callDetail } from "../lib/admin-data.mjs";
-import { adLinks, findProspects, polishTemplates, addProspect, buildProposition, nicheFor, pickNiche, PROSPECT_STATUSES, NICHES } from "../lib/prospects.mjs";
+import { ensureRich, adLinks, findProspects, polishTemplates, addProspect, buildProposition, nicheFor, pickNiche, PROSPECT_STATUSES, NICHES } from "../lib/prospects.mjs";
 import { buildProposalPdf } from "../lib/pdf.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions } from "../lib/jobs.mjs";
 
@@ -634,9 +634,10 @@ async function admin(req, db, p, method) {
 
   // GET /api/admin/prospects/:id/pdf  (the proposal as a PDF to send)
   if (p[0] === "prospects" && p.length === 3 && p[2] === "pdf" && method === "GET") {
-    const [row] = await db.sql`SELECT name, website, niche, proposition FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
+    const [row] = await db.sql`SELECT name, website, niche, phone, audit, proposition FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
     if (!row?.proposition) return fail(404, "Not found.");
-    const bytes = await buildProposalPdf({ name: row.name, website: row.website, niche: row.niche, proposition: row.proposition, contact: Netlify.env.get("PROPOSAL_CONTACT") || "" });
+    const niche = nicheFor(row.niche) || { label: row.niche, job: "new enquiries" };
+    const bytes = await buildProposalPdf({ name: row.name, website: row.website, audit: row.audit, phone: row.phone ? (row.phone.startsWith("+44") ? "0" + row.phone.slice(3) : row.phone) : "", proposition: ensureRich(row.proposition, row, row.audit, niche), contact: Netlify.env.get("PROPOSAL_CONTACT") || "" });
     const file = "proposal-" + (slugify(row.name) || "business") + ".pdf";
     return new Response(bytes, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${file}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
   }

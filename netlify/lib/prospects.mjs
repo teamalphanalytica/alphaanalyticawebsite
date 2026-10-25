@@ -31,6 +31,25 @@ export const NICHES = [
   { id: "driving", label: "Driving schools", tags: [["amenity", "driving_school"]], job: "new learner bookings" },
 ];
 
+/** Illustrative only: what a typical job might be worth, used in a clearly labelled worked example. */
+export const NICHE_EXTRA = {
+  roofers: { services: ["Roof repairs", "New roofs", "Flat roofs", "Gutters and fascias"], job: "roofing job", value: 1500 },
+  plumbers: { services: ["Boiler installation", "Boiler repairs", "Servicing and safety checks", "General plumbing"], job: "boiler installation", value: 2500 },
+  electricians: { services: ["Rewires", "Fuse boards", "EV charger installs", "Testing and certificates"], job: "electrical job", value: 1200 },
+  builders: { services: ["Extensions", "Loft conversions", "Renovations", "Kitchens and bathrooms"], job: "building project", value: 8000 },
+  landscapers: { services: ["Garden design", "Patios and paving", "Lawns and turf", "Fencing"], job: "garden project", value: 3000 },
+  windows: { services: ["Windows", "Doors", "Conservatories", "Repairs and glazing"], job: "windows or doors order", value: 4000 },
+  kitchens: { services: ["Fitted kitchens", "Bathrooms", "Tiling", "Free design visit"], job: "kitchen or bathroom", value: 7000 },
+  solar: { services: ["Solar panels", "Battery storage", "EV chargers", "Free survey"], job: "solar install", value: 7000 },
+  locksmiths: { services: ["Emergency lockouts", "Lock changes", "uPVC door locks", "Security upgrades"], job: "locksmith call-out", value: 150 },
+  removals: { services: ["House moves", "Office moves", "Packing", "Storage"], job: "removal job", value: 700 },
+  driveways: { services: ["Block paving", "Resin driveways", "Patios", "Drainage"], job: "driveway", value: 5000 },
+  painters: { services: ["Interior decorating", "Exterior painting", "Plastering", "Wallpapering"], job: "decorating job", value: 1500 },
+  dentists: { services: ["New patient exams", "Hygiene", "Whitening", "Implants"], job: "new patient", value: 600 },
+  solicitors: { services: ["Conveyancing", "Wills and probate", "Family law", "Free first call"], job: "new client", value: 900 },
+  driving: { services: ["Beginner lessons", "Intensive courses", "Test preparation", "Refresher lessons"], job: "new learner", value: 700 },
+};
+
 /** Same niche all day, a new one tomorrow. */
 export function pickNiche(date = new Date(), niches = NICHES) {
   const day = Math.floor(date.getTime() / 86_400_000);
@@ -155,6 +174,23 @@ export async function fetchHomepage(website, { fetchImpl = fetch, timeoutMs = 60
   throw new Error("Too many redirects");
 }
 
+const ACCREDITATIONS = [
+  ["Gas Safe registered", /gas safe/], ["Worcester Bosch accredited", /worcester[ -]?bosch/], ["Vaillant approved", /vaillant/], ["Checkatrade", /checkatrade/],
+  ["Trustpilot reviews", /trustpilot/], ["TrustMark", /trustmark/], ["NICEIC registered", /niceic/], ["NAPIT registered", /napit/], ["Which? Trusted Trader", /trusted trader/],
+  ["Federation of Master Builders", /federation of master builders|\bfmb\b/], ["Rated People", /rated people/], ["MyBuilder", /mybuilder/], ["OFTEC registered", /oftec/], ["MCS certified", /\bmcs\b/],
+];
+
+/** Plain facts from the homepage that the concept website reuses: headings, credentials, phone numbers, year started. */
+export function siteFacts(html, text) {
+  const strip = (x) => x.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#?\w+;/g, " ").replace(/\s+/g, " ").trim();
+  const title = strip((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "").slice(0, 120);
+  const headings = [...html.matchAll(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi)].map((m) => strip(m[2])).filter((t) => t.length >= 4 && t.length <= 60).slice(0, 12);
+  const accreditations = ACCREDITATIONS.filter(([, re]) => re.test(text)).map(([name]) => name);
+  const phones = [...new Set([...text.matchAll(new RegExp(UK_PHONE.source, "g"))].map((m) => m[0].replace(/\s+/g, " ").trim()))].slice(0, 3);
+  const since = Number((text.match(/(?:since|established|est\.?|trading since|serving .{0,30} since)\s*((?:19|20)\d\d)/) || [])[1]) || null;
+  return { title, headings, accreditations, phones, since };
+}
+
 /** The business's own Facebook page, if the homepage links to it (not share buttons or trackers). */
 export function facebookPageOf(html) {
   const skip = new Set(["sharer", "sharer.php", "share.php", "tr", "plugins", "dialog", "login", "policy", "policies", "legal", "help", "groups", "events", "watch", "marketplace", "pages", "profile.php", "people", "hashtag", "ads", "business"]);
@@ -196,6 +232,7 @@ export function auditHtml(html, { https = true, year = new Date().getFullYear() 
   checks.dated = newest !== null && newest <= year - 3;
   checks.thin = text.length < 400;
 
+  checks.facts = siteFacts(h, text);
   const issues = [];
   const add = (key, penalty, title, detail) => issues.push({ key, penalty, title, detail });
   if (!checks.https) add("https", 15, "The site isn't secure", "It loads without the padlock, so browsers warn visitors and Google ranks it lower.");
@@ -268,6 +305,32 @@ export function adsSummary(p, audit) {
 
 const pitchPrice = () => clean(globalThis.Netlify?.env?.get?.("PITCH_PRICE_TEXT"), 200);
 
+const GENERIC_HEADING = /^(home|about|contact|menu|testimonials?|reviews?|services?|gallery|welcome|our work|get in touch|send us a message|call us|follow us|search|navigation|footer|cookies?|privacy)/i;
+
+/** What the mock-up website says. Credentials appear only if we found them on their real site. */
+export function conceptFor(p, audit, niche, extra = NICHE_EXTRA[niche?.id] || {}) {
+  const facts = audit?.checks?.facts || {};
+  const seen = new Set();
+  const fromSite = (facts.headings || []).filter((t) => !GENERIC_HEADING.test(t) && t.length <= 36 && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 4);
+  const trust = [...(facts.accreditations || [])];
+  if (facts.since) trust.unshift(`Trading since ${facts.since}`);
+  const phone = p.phone ? (p.phone.startsWith("+44") ? "0" + p.phone.slice(3) : p.phone) : facts.phones?.[0] || "";
+  return {
+    tagline: `${niche?.label || "Local professionals"} you can trust, across Greater Manchester`,
+    subline: "Get a free, no-obligation quote in minutes, or call us now.",
+    services: (fromSite.length >= 3 ? fromSite : extra.services || ["Free quotes", "Repairs", "New work", "Call-outs"]).slice(0, 4),
+    trust: trust.slice(0, 4),
+    phone,
+  };
+}
+
+/** Older saved proposals lack the concept and benefits. Fill them in so every proposal prints the full document. */
+export function ensureRich(proposition, p, audit, niche) {
+  if (proposition?.concept && proposition?.benefits?.length && proposition?.value_example) return proposition;
+  const t = templateProposition(p, audit, niche);
+  return { ...proposition, concept: proposition?.concept || t.concept, benefits: proposition?.benefits?.length ? proposition.benefits : t.benefits, value_example: proposition?.value_example || t.value_example };
+}
+
 /** Written from the audit alone. Used when there is no Claude key, and as a safe fallback. */
 export function templateProposition(p, audit, niche) {
   const issues = audit?.issues || [];
@@ -285,7 +348,24 @@ export function templateProposition(p, audit, niche) {
       : null;
   const running = adsSeen || tracked;
   const findings = [...(adFinding ? [adFinding] : []), ...top].slice(0, 3);
+  const extra = NICHE_EXTRA[niche?.id] || { services: ["Free quotes", "Repairs", "New work", "Call-outs"], job: "job", value: 1000 };
+  const facts = audit?.checks?.facts || {};
+  const concept = conceptFor(p, audit, niche, extra);
+  const credentials = facts.accreditations?.length > 0;
+  const benefits = [
+    { title: "A site that works on every phone", why: "Many people look for a tradesperson on their phone, often in a hurry. A page that is awkward to read or use makes them go back and try the next result.", value: "More of the people who find you stay long enough to get in touch." },
+    { title: "One tap to call, one clear quote button", why: "The easiest route from \"I need someone\" to talking to you is a call button that is always on screen and a quote form that takes seconds.", value: "More of your visitors turn into calls and enquiries instead of leaving." },
+    credentials
+      ? { title: "Your credentials and reviews up front", why: "People choose the business that looks trustworthy. Your registrations and reviews are what people look for first, so they should be impossible to miss.", value: "Customers arrive already reassured, so fewer shop around on price alone." }
+      : { title: "Proof you can be trusted, up front", why: "People choose the business that looks trustworthy. Reviews, accreditations and photos of real work belong at the top of the page.", value: "Customers arrive already reassured, so fewer shop around on price alone." },
+    { title: "A page for each service and area", why: "Google shows pages that match what someone searched for. Separate pages for each service and town give you more chances to appear in your patch.", value: "More local people find you without you paying for every click." },
+    { title: "Every enquiry traced to where it came from", why: "Each advert gets its own tracking number and form, so each call and message links back to the advert that produced it.", value: "You see which adverts bring work and stop paying for the ones that don't." },
+    { title: "You only pay for genuine enquiries", why: "We charge per genuine enquiry rather than a monthly retainer. Spam, sales calls and wrong numbers aren't charged.", value: "The cost rises only when real customers get in touch." },
+  ];
+  const jobs = Math.round(20 * 0.25);
+  const value_example = { enquiries: 20, one_in: 4, jobs, job: extra.job, job_value: extra.value, total: jobs * extra.value };
   return {
+    concept, benefits, value_example,
     headline: `More of the right enquiries for ${p.name}`,
     summary: `We took a look at ${p.website ? "your website" : "how customers find you online"} and found a few things that may be costing ${p.name} work. Here is what we noticed and what we would do about it.`,
     findings: (findings.length ? findings : [{ title: "A good starting point", detail: "Your website covers the basics. The opportunity is bringing more of the right people to it." }])
@@ -323,7 +403,7 @@ export function propositionRequest(p, audit, niche) {
     "For advertising, only say what the facts show. \"not checked\" means unknown: never claim they do or do not advertise. If an ad tag or pixel is on their website, say we saw it; never claim to have seen their actual ads unless checked by hand says running ads.",
     "Do not state any price unless one is given in the facts. If none is given, say the price per enquiry is agreed on a short call.",
     "Reply with ONE JSON object and nothing else, in exactly this shape:",
-    '{"headline": string (max 70 chars), "summary": string (2 sentences), "findings": [{"title": string, "detail": string}] (exactly 3, taken from the issues given), "plan": [string] (4 items), "offer": string (2 sentences), "call": {"opener": string (what to say in the first 15 seconds, naming the business), "why_now": string, "questions": [string] (3), "objections": [{"q": string, "a": string}] (3)}, "cover_note": string (3 sentences, to send with the PDF after a call)}',
+    '{"headline": string (max 70 chars), "summary": string (2 sentences), "findings": [{"title": string, "detail": string}] (exactly 3, taken from the issues given), "plan": [string] (4 items), "offer": string (2 sentences), "call": {"opener": string (what to say in the first 15 seconds, naming the business), "why_now": string, "questions": [string] (3), "objections": [{"q": string, "a": string}] (3)}, "cover_note": string (3 sentences, to send with the PDF after a call), "concept": {"tagline": string (max 70 chars, for a new website headline), "subline": string (max 100 chars), "services": [string] (4 short service names taken from their site headings), "trust": [string] (up to 4 credentials that appear in site_facts.accreditations or the year started; an empty list if none)}, "benefits": [{"title": string, "why": string (why it matters, 1-2 sentences), "value": string (what it means for them, no numbers or percentages)}] (exactly 5)}',
   ].join("\n");
   const facts = {
     business: p.name,
@@ -333,6 +413,7 @@ export function propositionRequest(p, audit, niche) {
     audit_score_out_of_100: audit?.score,
     issues_we_observed: (audit?.issues || []).slice(0, 5).map((i) => ({ title: i.title, detail: i.detail })),
     advertising: adsSummary(p, audit),
+    site_facts: audit?.checks?.facts || null,
     price_wording: pitchPrice() || "none given",
   };
   return { system, user: "Facts about this prospect:\n" + JSON.stringify(facts, null, 2) };
@@ -365,6 +446,10 @@ export function parseProposition(text) {
     },
     cover_note: s(o.cover_note, 700),
   };
+  const c = o.concept;
+  if (c && s(c.tagline, 90)) out.concept = { tagline: s(c.tagline, 90), subline: s(c.subline, 120), services: list(c.services, 4, (x) => s(x, 40)), trust: list(c.trust, 4, (x) => s(x, 50)), phone: s(c.phone, 30) };
+  const bn = list(o.benefits, 6, (b) => (b && s(b.title, 80) && s(b.why, 300) && s(b.value, 240) ? { title: s(b.title, 80), why: s(b.why, 300), value: s(b.value, 240) } : null));
+  if (bn.length >= 3) out.benefits = bn;
   if (!out.headline || out.findings.length < 1 || out.plan.length < 2 || !out.call.opener) return null;
   return out;
 }
@@ -378,7 +463,7 @@ export async function claudeProposition(p, audit, niche, { fetchImpl = fetch } =
     const res = await fetchImpl("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: globalThis.Netlify.env.get("PROPOSAL_MODEL") || "claude-sonnet-5-5", max_tokens: 1800, system: req.system, messages: [{ role: "user", content: req.user }] }),
+      body: JSON.stringify({ model: globalThis.Netlify.env.get("PROPOSAL_MODEL") || "claude-sonnet-5-5", max_tokens: 2800, system: req.system, messages: [{ role: "user", content: req.user }] }),
       signal: AbortSignal.timeout(25_000),
     });
     const data = await res.json().catch(() => ({}));

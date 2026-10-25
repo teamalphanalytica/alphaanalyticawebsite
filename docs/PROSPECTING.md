@@ -8,6 +8,8 @@ Admin, then **Prospects**. Every weekday at about 7am a scheduled job:
 4. Keeps the few it can help most (default 5, never one already in the list, never a site with little to fix).
 5. Writes a proposal and a call script for each. Open the **proposal PDF**, ring them, send it afterwards.
 
+The PDF is three pages: where they stand today (a scorecard of what we saw), a drawn mock-up of what their new website could look like on a computer and a phone (using their own services and credentials only where we found them on their site), and the benefits with why each matters, plus a worked example of what it could be worth. The example uses clearly labelled illustrative figures and says so; we use the prospect's own numbers on the call.
+
 Nothing is ever sent to a business automatically. You choose who to call.
 
 ## Their advertising

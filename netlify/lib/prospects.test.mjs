@@ -180,3 +180,46 @@ test("the proposal only claims what was checked about advertising", () => {
   assert.match(req.user, /running ads \(checked by hand\)/);
   assert.match(req.system, /never claim they do or do not advertise/);
 });
+
+test("credentials, headings and the year started are read from the homepage and reused in the concept", async () => {
+  const { conceptFor, ensureRich, NICHE_EXTRA } = await import("./prospects.mjs");
+  const a = auditHtml(`<html><head><title>Smith Plumbing</title></head><body><h1>Boiler installation</h1><h2>Boiler repairs</h2><h2>Contact us</h2><h2>Landlord gas safety</h2><h2>Servicing</h2>
+    <p>Gas Safe registered engineers. Worcester Bosch accredited installer. Trading since 2004. Call 07990 933344. ${"x ".repeat(300)}</p></body></html>`);
+  const f = a.checks.facts;
+  assert.ok(f.accreditations.includes("Gas Safe registered") && f.accreditations.includes("Worcester Bosch accredited"));
+  assert.equal(f.since, 2004);
+  assert.ok(f.phones[0].startsWith("07990"));
+  const c = conceptFor({ name: "Smith", phone: "+441617720947" }, a, NICHES[1]);
+  assert.deepEqual(c.services.slice(0, 2), ["Boiler installation", "Boiler repairs"]);
+  assert.ok(!c.services.includes("Contact us"));
+  assert.equal(c.trust[0], "Trading since 2004");
+  assert.equal(c.phone, "01617720947");
+  // with nothing found, credentials are never invented
+  const bare = conceptFor({ name: "Bare" }, auditHtml("<html><body>hi</body></html>"), NICHES[0]);
+  assert.deepEqual(bare.trust, []);
+  assert.deepEqual(bare.services, NICHE_EXTRA.roofers.services);
+  // an older proposal without a concept gets one
+  const rich = ensureRich({ headline: "H", findings: [], plan: [] }, { name: "Old" }, a, NICHES[1]);
+  assert.ok(rich.concept && rich.benefits.length >= 5 && rich.value_example.total === rich.value_example.jobs * rich.value_example.job_value);
+});
+
+test("the proposal is a three-page document with the mock-up and the worked example, and says it is illustrative", async () => {
+  const { PDFDocument } = await import("pdf-lib");
+  const p = { name: "Smith Plumbing", website: "https://smith.co.uk", phone: "+441610000000" };
+  const audit = auditHtml("<html><head><title>x</title></head><body>Gas Safe registered. old</body></html>");
+  const pr = templateProposition(p, audit, NICHES[1]);
+  const bytes = await buildProposalPdf({ name: p.name, website: p.website, audit, phone: "0161 000 0000", proposition: pr, contact: "Jordan" });
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 3);
+  assert.match(pr.value_example.job, /boiler/);
+  assert.equal(pr.benefits.some((b) => /\d+%/.test(b.value + b.why)), false, "no invented percentages");
+});
+
+test("Claude's concept and benefits are accepted when present and ignored when thin", () => {
+  const base = { headline: "H", summary: "S", findings: [{ title: "T", detail: "D" }], plan: ["a", "b"], offer: "O", call: { opener: "Hi" }, cover_note: "c" };
+  const withExtras = parseProposition(JSON.stringify({ ...base, concept: { tagline: "Boilers done right", subline: "Free quotes", services: ["A", "B", "C", "D"], trust: ["Gas Safe registered"] },
+    benefits: [1, 2, 3, 4, 5].map((n) => ({ title: "T" + n, why: "W", value: "V" })) }));
+  assert.equal(withExtras.concept.tagline, "Boilers done right");
+  assert.equal(withExtras.benefits.length, 5);
+  const thin = parseProposition(JSON.stringify({ ...base, benefits: [{ title: "only one", why: "w", value: "v" }] }));
+  assert.equal(thin.benefits, undefined);
+});
