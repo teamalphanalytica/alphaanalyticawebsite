@@ -284,3 +284,12 @@ test("the proposal with Google results stays at three pages", async () => {
   const bytes = await buildProposalPdf({ name: p.name, website: p.website, audit, rankings, phone: "0161", proposition: templateProposition({ ...p, rankings }, audit, NICHES[1]), contact: "Jordan" });
   assert.equal((await PDFDocument.load(bytes)).getPageCount(), 3);
 });
+
+test("every proposal has an 'In short' summary in plain words, from the template or from Claude", () => {
+  const pr = templateProposition({ name: "A" }, auditHtml("<html><body>hi</body></html>"), NICHES[0]);
+  assert.ok(pr.short_version.found && pr.short_version.plan && /retainer/.test(pr.short_version.cost));
+  const base = { headline: "H", summary: "S", findings: [{ title: "T", detail: "D" }], plan: ["a", "b"], offer: "O", call: { opener: "Hi" }, cover_note: "c" };
+  assert.equal(parseProposition(JSON.stringify({ ...base, short_version: { found: "f", plan: "p", cost: "c" } })).short_version.plan, "p");
+  assert.equal(parseProposition(JSON.stringify({ ...base, short_version: { found: "f" } })).short_version, undefined);
+  assert.match(propositionRequest({ name: "A" }, auditHtml("<p>x</p>"), NICHES[0]).system, /understands it in one read/);
+});

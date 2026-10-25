@@ -10,7 +10,7 @@ Admin, then **Prospects**. Every weekday at about 7am a scheduled job:
 
 The PDF is three pages: where they stand today (a scorecard of what we saw), a drawn mock-up of what their new website could look like on a computer and a phone (using their own services and credentials only where we found them on their site), and the benefits with why each matters, plus a worked example of what it could be worth. The example uses clearly labelled illustrative figures and says so; we use the prospect's own numbers on the call.
 
-Nothing is ever sent to a business automatically. You choose who to call.
+The wording to use on the phone is in [PITCH.md](PITCH.md). Nothing is ever sent to a business automatically. You choose who to call.
 
 ## Their advertising
 

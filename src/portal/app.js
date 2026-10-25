@@ -835,6 +835,28 @@ function viewAdminPerformance() {
     ${p.call_outcomes.length ? `<div class="panel"><h2>What callers wanted</h2><ul class="checks launch">${p.call_outcomes.map((o) => `<li><span class="chip ${OUTCOME_CLASS[o.outcome] || ""}">${esc(OUTCOME_TEXT[o.outcome] || "Other")}</span> ${o.n} call${o.n === 1 ? "" : "s"}</li>`).join("")}</ul></div>` : ""}`;
 }
 
+const STANDARD_PITCH = {
+  thirty: "Hi, is that [name]? It's Jordan from Alpha Analytica. We're a small Manchester business that helps local firms get more enquiries from Google and Facebook. I had a quick look at your website and noticed [the main thing from the proposal]. We'd build you a new website that works well on phones and run the adverts, and you only pay for genuine enquiries, with no monthly retainer. Can I send you a one-page summary of what I found?",
+  beats: [
+    "What I noticed: one specific thing from their proposal, said simply.",
+    "What we do: a new website, Google and Facebook adverts, and a private login showing every enquiry and call.",
+    "Why us: we're small, so you deal with me. Every Monday our AI reviews your results, and I check the changes and make them.",
+    "How you pay: per genuine enquiry. Spam and wrong numbers aren't charged. We agree the price on a short call.",
+    "The ask: \"Can I send you the one-pager and ring you on [day] to talk it through?\"",
+  ],
+  ask: ["Where do most of your enquiries come from at the moment?", "How many a week would you like?", "What's a typical job worth to you?"],
+  avoid: ["Don't promise rankings, results or \"being ahead of everyone\". Say we review and improve every week.", "Don't mention past clients or results. We have none to show yet. Say you're starting out and offer to show the design first.", "Don't name or criticise their competitors.", "Don't email a sole trader or partnership cold. Call only, after the TPS check."],
+};
+
+function standardPitch() {
+  const p = STANDARD_PITCH;
+  return `<details class="prospect-rules"><summary>Your standard pitch (the same for every business)</summary>
+    <h4>30 seconds, on the phone</h4><p>${esc(p.thirty)}</p>
+    <h4>If they want to hear more (two minutes)</h4><ol>${p.beats.map((b) => `<li>${esc(b)}</li>`).join("")}</ol>
+    <h4>Three questions to ask</h4><ul>${p.ask.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>
+    <h4>What not to say</h4><ul>${p.avoid.map((b) => `<li>${esc(b)}</li>`).join("")}</ul></details>`;
+}
+
 const PROSPECT_STATUS_TEXT = { new: "New", to_call: "To call", contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", skip: "Not for us" };
 const PROSPECT_ACTIVE = ["new", "to_call", "contacted", "replied"];
 
@@ -949,6 +971,7 @@ function viewAdminProspects() {
       </div>
       <p><button class="btn btn-primary" data-action="run-job" data-job="prospects" type="button">Find today's businesses now</button>
         <span class="muted small">Takes about 20 seconds. Safe to press again: it never repeats a business.</span></p>
+      ${standardPitch()}
       <details class="prospect-rules"><summary>Before you ring or email anyone</summary>
         <ul>
           <li>Check the number isn't on the TPS (individuals) or CTPS (companies) do-not-call list at tpsonline.org.uk before a cold call.</li>

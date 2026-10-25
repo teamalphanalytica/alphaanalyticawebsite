@@ -235,14 +235,14 @@ export function auditHtml(html, { https = true, year = new Date().getFullYear() 
   checks.facts = siteFacts(h, text);
   const issues = [];
   const add = (key, penalty, title, detail) => issues.push({ key, penalty, title, detail });
-  if (!checks.https) add("https", 15, "The site isn't secure", "It loads without the padlock, so browsers warn visitors and Google ranks it lower.");
-  if (!checks.mobile) add("mobile", 20, "It isn't built for phones", "There's no mobile setting on the page, so on a phone it is likely to show as a tiny desktop page. Most trade searches happen on phones.");
-  if (!checks.tapToCall) add("tapToCall", 15, "Phone number isn't tap-to-call", "We couldn't find a number a visitor can tap to ring. On mobile that is the quickest way for a customer to reach you.");
+  if (!checks.https) add("https", 15, "The site isn't secure", "It loads without the padlock, so browsers warn visitors and Google is less likely to show it.");
+  if (!checks.mobile) add("mobile", 20, "It looks like it's hard to use on a phone", "On a phone the page is likely to show as a tiny desktop page that is awkward to read. Many people looking for a tradesperson are on their phone.");
+  if (!checks.tapToCall) add("tapToCall", 15, "Customers can't tap your number to call", "We couldn't find a number a visitor can tap to ring you. On a phone that is the quickest way for a customer to get in touch.");
   if (!checks.form && !checks.tapToCall) add("form", 10, "No quick way to enquire", "We couldn't find an enquiry form or a tap-to-call link on the homepage.");
   if (!checks.callToAction) add("callToAction", 5, "No clear next step", "We couldn't see a clear \"get a quote\" or \"call us\" prompt on the homepage.");
-  if (!checks.analytics && !checks.adTracking) add("tracking", 15, "Nothing measures where enquiries come from", "We couldn't see any analytics or advertising tracking on the page, so there's no way to tell which marketing brings in work.");
+  if (!checks.analytics && !checks.adTracking) add("tracking", 15, "Nothing shows where your enquiries come from", "We couldn't see anything on the page that records where enquiries come from, so there's no way to tell which marketing is worth the money.");
   if (!checks.reviews) add("reviews", 5, "No reviews shown", "We couldn't see reviews or testimonials on the homepage. They're one of the biggest reasons people pick one tradesperson over another.");
-  if (!checks.title || !checks.description) add("seo", 5, "Missing search listing text", "The page title or description that appears in Google results looks missing or very thin.");
+  if (!checks.title || !checks.description) add("seo", 5, "Your Google listing text is thin", "The title and short description people see in Google results look missing or very short.");
   if (checks.dated) add("dated", 10, "Looks out of date", `The footer still says ${checks.copyrightYear}, which makes a business look inactive.`);
   if (checks.thin) add("thin", 10, "Very little on the page", "There isn't much text for Google (or a visitor) to go on.");
 
@@ -408,9 +408,9 @@ export function conceptFor(p, audit, niche, extra = NICHE_EXTRA[niche?.id] || {}
 
 /** Older saved proposals lack the concept and benefits. Fill them in so every proposal prints the full document. */
 export function ensureRich(proposition, p, audit, niche) {
-  if (proposition?.concept && proposition?.benefits?.length && proposition?.value_example) return proposition;
+  if (proposition?.concept && proposition?.benefits?.length && proposition?.value_example && proposition?.short_version) return proposition;
   const t = templateProposition(p, audit, niche);
-  return { ...proposition, concept: proposition?.concept || t.concept, benefits: proposition?.benefits?.length ? proposition.benefits : t.benefits, value_example: proposition?.value_example || t.value_example };
+  return { ...proposition, concept: proposition?.concept || t.concept, benefits: proposition?.benefits?.length ? proposition.benefits : t.benefits, value_example: proposition?.value_example || t.value_example, short_version: proposition?.short_version || t.short_version };
 }
 
 /** Written from the audit alone. Used when there is no Claude key, and as a safe fallback. */
@@ -442,28 +442,33 @@ export function templateProposition(p, audit, niche) {
   const concept = conceptFor(p, audit, niche, extra);
   const credentials = facts.accreditations?.length > 0;
   const benefits = [
-    { title: "A site that works on every phone", why: "Many people look for a tradesperson on their phone, often in a hurry. A page that is awkward to read or use makes them go back and try the next result.", value: "More of the people who find you stay long enough to get in touch." },
-    { title: "One tap to call, one clear quote button", why: "The easiest route from \"I need someone\" to talking to you is a call button that is always on screen and a quote form that takes seconds.", value: "More of your visitors turn into calls and enquiries instead of leaving." },
+    { title: "A website that works on every phone", why: "Many people look for a tradesperson on their phone, often in a hurry. If the site is awkward to use, they go to the next one.", value: "More visitors get in touch instead of leaving." },
+    { title: "One tap to call, one clear quote button", why: "The quickest way from \"I need someone\" to talking to you is a call button that is always on screen.", value: "More visitors turn into calls and enquiries." },
     credentials
-      ? { title: "Your credentials and reviews up front", why: "People choose the business that looks trustworthy. Your registrations and reviews are what people look for first, so they should be impossible to miss.", value: "Customers arrive already reassured, so fewer shop around on price alone." }
-      : { title: "Proof you can be trusted, up front", why: "People choose the business that looks trustworthy. Reviews, accreditations and photos of real work belong at the top of the page.", value: "Customers arrive already reassured, so fewer shop around on price alone." },
-    { title: "A page for each service and area", why: "Google shows pages that match what someone searched for. Separate pages for each service and town give you more chances to appear in your patch.", value: "More local people find you without you paying for every click." },
-    { title: "Every enquiry traced to where it came from", why: "Each advert gets its own tracking number and form, so each call and message links back to the advert that produced it.", value: "You see which adverts bring work and stop paying for the ones that don't." },
-    { title: "You only pay for genuine enquiries", why: "We charge per genuine enquiry rather than a monthly retainer. Spam, sales calls and wrong numbers aren't charged.", value: "The cost rises only when real customers get in touch." },
+      ? { title: "Your credentials and reviews up front", why: "People pick the business that looks trustworthy. Your registrations and reviews are what they look for first, so they should be impossible to miss.", value: "Customers arrive already reassured, so fewer choose on price alone." }
+      : { title: "Proof you can be trusted, up front", why: "People pick the business that looks trustworthy. Reviews, accreditations and photos of real work belong at the top of the page.", value: "Customers arrive already reassured, so fewer choose on price alone." },
+    { title: "A page for each service and town", why: "Google shows the pages that match what someone typed. A page for each service and town gives you more chances to be found.", value: "More local people find you without you paying for every click." },
+    { title: "Every enquiry traced to its source", why: "Each advert gets its own phone number and form, so every call and message links back to the advert that caused it.", value: "You see which adverts bring work and stop paying for the rest." },
   ];
   const jobs = Math.round(20 * 0.25);
   const value_example = { enquiries: 20, one_in: 4, jobs, job: extra.job, job_value: extra.value, total: jobs * extra.value };
+  const lead = (findings[0] || {}).title || "a few things that may be costing you enquiries";
+  const short_version = {
+    found: findings.length > 1 ? `${lead}, and ${findings.length - 1} other thing${findings.length > 2 ? "s" : ""} worth fixing.` : `${lead}.`,
+    plan: "A new website that's easy to use on a phone, Google and Facebook adverts aimed at people near you, and a weekly review of your results.",
+    cost: "No retainer. You pay for each genuine enquiry. Spam and wrong numbers are free.",
+  };
   return {
-    concept, benefits, value_example,
+    concept, benefits, value_example, short_version,
     headline: `More of the right enquiries for ${p.name}`,
     summary: `We took a look at ${p.website ? "your website" : "how customers find you online"} and found a few things that may be costing ${p.name} work. Here is what we noticed and what we would do about it.`,
     findings: (findings.length ? findings : [{ title: "A good starting point", detail: "Your website covers the basics. The opportunity is bringing more of the right people to it." }])
       .map((i) => ({ title: i.title, detail: i.detail })),
     plan: [
-      p.website ? "Fix the points above on your website, so every visit has the best chance of turning into an enquiry" : "Build you a simple, fast website that works on phones, with a tap-to-call button and an enquiry form",
+      p.website ? "Fix the points above on your website, so more visitors get in touch" : "Build you a simple, fast website that works on phones, with a tap-to-call button and an enquiry form",
       running ? "Review the Google and Facebook adverts you already run, cut what isn't bringing enquiries and put the money into what is" : "Run Google and Facebook adverts aimed at people near you who are looking for your service",
-      "Give every ad enquiry and call a tracking number, so each call or message is linked back to the advert that produced it",
-      "Give you a private login showing every enquiry and call, and where it came from",
+      "Give each advert its own phone number and form, so you can see which ones bring work",
+      "Give you a private login that shows every enquiry and call, and where it came from",
     ],
     offer: price || "You pay per genuine enquiry, not a monthly retainer. Spam and wrong numbers aren't charged. We agree the price per enquiry on a short call.",
     call: {
@@ -489,13 +494,14 @@ export function propositionRequest(p, audit, niche) {
   const system = [
     "You write short, honest sales proposals for Alpha Analytica, a small Manchester marketing agency that builds websites and runs Google and Facebook ads for local businesses, charging per genuine enquiry (spam and wrong numbers are not charged).",
     "About us, if you mention it: we are a small Manchester business, you deal with the founder, and every Monday our AI reviews each client's last week of results and recommends changes that a person checks and makes. Do not say the AI changes adverts by itself, and do not promise results, rankings or that we are \"always ahead of the competition\".",
+    "Write so a busy business owner understands it in one read: short sentences, everyday words (say enquiries not leads, adverts not campaigns, website not landing page), nothing that needs explaining.",
     "Write in plain British English for a busy tradesperson or small-business owner. No jargon, no hype, no exclamation marks.",
     "Use ONLY the facts provided. Never invent statistics, rankings, competitor claims, revenue figures, reviews, guarantees or results. Never claim to have seen their ads, accounts or analytics. Describe website problems as things we noticed or could not find on the page, not as certainties about their business.",
     "For Google search results, only use google_search_results: say where they appear only for searches that were checked; never claim a position for one that was not.",
     "For advertising, only say what the facts show. \"not checked\" means unknown: never claim they do or do not advertise. If an ad tag or pixel is on their website, say we saw it; never claim to have seen their actual ads unless checked by hand says running ads.",
     "Do not state any price unless one is given in the facts. If none is given, say the price per enquiry is agreed on a short call.",
     "Reply with ONE JSON object and nothing else, in exactly this shape:",
-    '{"headline": string (max 70 chars), "summary": string (2 sentences), "findings": [{"title": string, "detail": string}] (exactly 3, taken from the issues given), "plan": [string] (4 items), "offer": string (2 sentences), "call": {"opener": string (what to say in the first 15 seconds, naming the business), "why_now": string, "questions": [string] (3), "objections": [{"q": string, "a": string}] (3)}, "cover_note": string (3 sentences, to send with the PDF after a call), "concept": {"tagline": string (max 70 chars, for a new website headline), "subline": string (max 100 chars), "services": [string] (4 short service names taken from their site headings), "trust": [string] (up to 4 credentials that appear in site_facts.accreditations or the year started; an empty list if none)}, "benefits": [{"title": string, "why": string (why it matters, 1-2 sentences), "value": string (what it means for them, no numbers or percentages)}] (exactly 5)}',
+    '{"headline": string (max 70 chars), "summary": string (2 sentences), "findings": [{"title": string, "detail": string}] (exactly 3, taken from the issues given), "plan": [string] (4 items), "offer": string (2 sentences), "call": {"opener": string (what to say in the first 15 seconds, naming the business), "why_now": string, "questions": [string] (3), "objections": [{"q": string, "a": string}] (3)}, "cover_note": string (3 sentences, to send with the PDF after a call), "short_version": {"found": string (one sentence: the main thing we found), "plan": string (one sentence: what we would do), "cost": string (one sentence on how they pay, no price unless one is given)}, "concept": {"tagline": string (max 70 chars, for a new website headline), "subline": string (max 100 chars), "services": [string] (4 short service names taken from their site headings), "trust": [string] (up to 4 credentials that appear in site_facts.accreditations or the year started; an empty list if none)}, "benefits": [{"title": string, "why": string (why it matters, 1-2 sentences), "value": string (what it means for them, no numbers or percentages)}] (exactly 5)}',
   ].join("\n");
   const facts = {
     business: p.name,
@@ -541,6 +547,8 @@ export function parseProposition(text) {
   };
   const c = o.concept;
   if (c && s(c.tagline, 90)) out.concept = { tagline: s(c.tagline, 90), subline: s(c.subline, 120), services: list(c.services, 4, (x) => s(x, 40)), trust: list(c.trust, 4, (x) => s(x, 50)), phone: s(c.phone, 30) };
+  const sv = o.short_version;
+  if (sv && s(sv.found, 260) && s(sv.plan, 260) && s(sv.cost, 260)) out.short_version = { found: s(sv.found, 260), plan: s(sv.plan, 260), cost: s(sv.cost, 260) };
   const bn = list(o.benefits, 6, (b) => (b && s(b.title, 80) && s(b.why, 300) && s(b.value, 240) ? { title: s(b.title, 80), why: s(b.why, 300), value: s(b.value, 240) } : null));
   if (bn.length >= 3) out.benefits = bn;
   if (!out.headline || out.findings.length < 1 || out.plan.length < 2 || !out.call.opener) return null;

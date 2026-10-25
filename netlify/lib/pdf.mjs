@@ -55,12 +55,12 @@ export function scoreRows(audit, extras = {}) {
   const f = c.facts || {};
   const t = (v) => (v === undefined ? null : v);
   return [
-    ["Works well on a phone", t(c.mobile)],
-    ["Number you can tap to call", t(c.tapToCall)],
-    ["Clear \"get a quote\" prompt", t(c.callToAction)],
-    ["Reviews or credentials shown", c.reviews === undefined && !f.accreditations ? null : !!(c.reviews || f.accreditations?.length)],
-    ["Secure (padlock in the browser)", t(c.https)],
-    ["Measures where enquiries come from", c.analytics === undefined ? null : !!(c.analytics || c.adTracking)],
+    ["Easy to use on a phone", t(c.mobile)],
+    ["Phone number customers can tap", t(c.tapToCall)],
+    ["Clear \"get a quote\" button", t(c.callToAction)],
+    ["Reviews and credentials visible", c.reviews === undefined && !f.accreditations ? null : !!(c.reviews || f.accreditations?.length)],
+    ["Secure (shows the padlock)", t(c.https)],
+    ["Shows where enquiries come from", c.analytics === undefined ? null : !!(c.analytics || c.adTracking)],
     ...(extras.rows || []),
   ];
 }
@@ -136,9 +136,26 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   /* ---------------- page 1: where you stand ---------------- */
   header(true);
   para(pr.headline, { size: 20, font: bold, color: MIDNIGHT, gap: 6, lead: 1.22 });
-  para(pr.summary, { size: 11, color: SLATE, gap: 6 });
+  const sv = pr.short_version;
+  if (sv) {
+    const rows2 = [["What we found", sv.found], ["What we'd do", sv.plan], ["What it costs", sv.cost]];
+    const lw = 78, tw = CW - lw - 28;
+    const hs = rows2.map(([, t]) => Math.max(1, wrap(t, reg, 10, tw).length) * 13 + 8);
+    const total = hs.reduce((a, b) => a + b, 0) + 22;
+    need(total + 10);
+    rect(M, y, CW, total, MIDNIGHT);
+    rect(M, y, 4, total, GOLD);
+    text("In short", M + 16, y + 7, 9.5, bold, GOLD);
+    let ry = y + 24;
+    rows2.forEach(([l, t], i) => {
+      text(l, M + 16, ry, 9.5, bold, WHITE);
+      textIn(t, M + 16 + lw, ry, tw, 10, reg, MIST, 1.3);
+      ry += hs[i];
+    });
+    y += total + 10;
+  } else para(pr.summary, { size: 11, color: SLATE, gap: 6 });
 
-  heading("Where you stand today");
+  heading("How your website is doing today");
   const rows = scoreRows(audit);
   const colW = CW / 2;
   rows.forEach((r, i) => {
@@ -153,7 +170,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
 
   const ranked = (rankings || []).filter((r) => r.bucket && r.bucket !== "unknown").slice(0, 3);
   if (ranked.length) {
-    heading(`Where you show up on ${rankingsSource}`);
+    heading(`Do customers find you? (${rankingsSource})`);
     const gap = 10, cw = (CW - gap * (ranked.length - 1)) / ranked.length;
     const lines = ranked.map((r) => wrap(`"${r.query}"`, bold, 9, cw - 20).length);
     const h = Math.max(...lines) * 11.5 + 56;
@@ -175,7 +192,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     para(`What a local customer sees when they search. Checked ${when}. Results vary a little by location and device.`, { size: 8.5, color: SLATE, gap: 6 });
   }
 
-  heading("What we noticed");
+  heading("What's holding you back");
   for (const f of pr.findings) {
     need(56);
     rect(M, y + 1, 3, 13, GOLD);
@@ -293,7 +310,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   text("Concept for illustration only. Logos, photos and wording are placeholders until we agree your design.", M, y, 7.5, reg, SLATE);
   y += 8;
   if (pr.plan && pr.plan.length) {
-    heading("What we would do");
+    heading("What we'd do for you");
     pr.plan.forEach((item, i) => {
       need(30);
       text(String(i + 1), M, y, 10.5, bold, GOLD);
@@ -303,7 +320,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
 
   /* ---------------- page 3: benefits and value ---------------- */
   header(false);
-  text("What you get, and why it matters", M, y, 13, bold, MIDNIGHT);
+  text("What you get", M, y, 13, bold, MIDNIGHT);
   y += 19;
   rect(M, y, CW, 1, RULE);
   y += 10;
@@ -337,7 +354,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     y += 88;
   }
 
-  heading("Why a small, AI-driven agency");
+  heading("Why choose us");
   const why = [
     ["You deal with the person running it", "We're a small Manchester business. You talk to the founder, not an account manager passing messages along."],
     ["Your results are reviewed every week", "Every Monday our AI reads your last seven days: spend, enquiries, spam, which campaigns bring customers. It recommends changes and we check each one before it's made."],
@@ -361,9 +378,20 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   }
   y += 2;
 
-  heading("How you pay, and the next step");
-  para(pr.offer, { gap: 5 });
-  para("Let's find ten minutes to talk it through. There's no obligation.", { gap: 4 });
+  heading("What it costs, and what happens next");
+  para(pr.offer, { gap: 6 });
+  [
+    ["A ten-minute call", "We talk through this and what you'd want. No obligation."],
+    ["We show you the design", "We agree your new website with you before anything goes live."],
+    ["Enquiries start arriving", "Every Monday we review your results, and you see every enquiry and call in your own login."],
+  ].forEach(([t, d], i) => {
+    need(24);
+    page.drawCircle({ x: M + 7, y: top(y + 6), size: 7, color: GOLD });
+    page.drawText(String(i + 1), { x: M + 4.6, y: top(y + 6) - 3.2, size: 9, font: bold, color: MIDNIGHT });
+    text(t, M + 22, y, 10, bold, INK);
+    text(d, M + 22, y + 12, 9, reg, SLATE);
+    y += 26;
+  });
   if (contact) para(contact, { font: bold, gap: 2 });
 
   const pages = doc.getPages();
