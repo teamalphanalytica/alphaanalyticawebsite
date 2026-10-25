@@ -19,6 +19,12 @@ Google and Facebook don't allow automatic collection of other people's ads, so t
 - **Automatic:** the website check notes whether the homepage carries a Google Ads tag, a Facebook pixel or analytics, and finds the business's Facebook page if it links to one.
 - **One click:** each card has **Check Google ads** (Google Ads Transparency Centre) and **Check Facebook ads** (Meta Ad Library), already searched for that business. Look, set the dropdown to *Running ads* or *No ads found*, then press **Rewrite proposal**. The proposal uses only what you recorded; "Not checked" is never turned into a claim.
 
+## Where they show up on Google
+
+Each card suggests the three searches a customer would make (two services plus the trade, each with their town). For each: click **Check on Google**, look where the business appears, and set the dropdown (top 3, first page, not on the first page, not found). Page 1 of the proposal then shows it, and the "what we noticed" text uses it. Unchecked searches are never mentioned.
+
+For hands-off checking, add `SERPAPI_KEY` (an account at serpapi.com, paid per search; each prospect uses about six searches). The **Check automatically** button then looks at the first two pages of google.co.uk results for each search and records the position and whether they're in the map results. It runs only when you press it, not daily, so you control the cost. Google results vary a little by location and device, which the proposal says.
+
 ## Settings (Netlify, Site configuration, Environment variables), all optional
 
 | Name | What it does |

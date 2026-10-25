@@ -865,6 +865,23 @@ function adsBlock(pr) {
     <p class="muted small">Opens Google's and Facebook's public ad libraries for this business. Look, then tell us what you saw so the proposal uses it. Press "Rewrite proposal" afterwards.</p></div>`;
 }
 
+const RANK_LABEL = { unknown: "Not checked", top3: "In the top 3", top10: "On the first page", later: "Not on the first page", none: "Didn't find them" };
+
+function searchesBlock(pr) {
+  const searches = pr.searches || [];
+  if (!searches.length) return "";
+  const saved = Object.fromEntries((pr.rankings || []).map((r) => [r.query, r]));
+  return `<div class="prospect-ads"><b>Where they show on Google</b>
+    <p class="muted small">The searches a customer would make. Click, look where the business appears, and record it. It goes on page 1 of the proposal.</p>
+    ${searches.map((s2, i) => { const r = saved[s2.query]; const v = r ? r.bucket : "unknown"; const link = safeHref(s2.url);
+      return `<div class="prospect-ads-row"><span class="rank-q">"${esc(s2.query)}"</span>
+        ${link ? `<a class="btn btn-ghost btn-small" href="${link}" target="_blank" rel="noopener noreferrer">Check on Google</a>` : ""}
+        <label class="sr-only" for="rk${pr.id}-${i}">Result for ${esc(s2.query)}</label>
+        <select id="rk${pr.id}-${i}" data-action="prospect-rank" data-id="${pr.id}" data-query="${esc(s2.query)}">${Object.entries(RANK_LABEL).map(([k, t]) => `<option value="${k}" ${v === k ? "selected" : ""}>${t}</option>`).join("")}</select>
+        ${r && r.position ? `<span class="muted small">position ${Number(r.position)}</span>` : ""}</div>`; }).join("")}
+    ${state.prospects && state.prospects.serp ? `<p><button class="btn btn-ghost btn-small" data-action="prospect-rank-auto" data-id="${pr.id}" type="button">Check automatically</button></p>` : `<p class="muted small">Automatic checking turns on when a SERPAPI_KEY is added in Netlify.</p>`}</div>`;
+}
+
 function prospectCard(pr) {
   const open = state.prospectOpen.has(String(pr.id));
   const issues = (pr.audit && pr.audit.issues ? pr.audit.issues : []).slice(0, 3);
@@ -882,6 +899,7 @@ function prospectCard(pr) {
       ${site ? ` · <a href="${site}" target="_blank" rel="noopener noreferrer">${esc(pr.website.replace(/^https?:\/\//, ""))}</a>` : ` · <span class="muted">no website found</span>`}</p>
     ${issues.length ? `<ul class="prospect-issues">${issues.map((i) => `<li><b>${esc(i.title)}</b> <span class="muted">${esc(i.detail)}</span></li>`).join("")}</ul>` : ""}
     ${adsBlock(pr)}
+    ${searchesBlock(pr)}
     <div class="prospect-actions">
       <a class="btn btn-primary btn-small" href="/api/admin/prospects/${Number(pr.id)}/pdf" target="_blank" rel="noopener">Open proposal PDF</a>
       <button class="btn btn-ghost btn-small" data-action="prospect-toggle" data-id="${pr.id}" type="button" aria-expanded="${open}">${open ? "Hide" : "Show"} call script</button>
@@ -1414,6 +1432,13 @@ app.addEventListener("click", (e) => {
       flash(r.ok ? "ok" : "err", r.ok ? "Reviewed. The note for the client was added to their draft report." : r.reason);
     });
   }
+  if (a === "prospect-rank-auto") {
+    return attempt(async () => {
+      const r = await api(`/admin/prospects/${el.dataset.id}/rankings/check`, { method: "POST", body: {} });
+      state.prospects = await api("/admin/prospects");
+      flash(r.ok ? "ok" : "err", r.ok ? "Checked on Google. Press Rewrite proposal to use it." : r.reason);
+    });
+  }
   if (a === "prospect-toggle") {
     const id = String(el.dataset.id);
     if (state.prospectOpen.has(id)) state.prospectOpen.delete(id); else state.prospectOpen.add(id);
@@ -1484,6 +1509,14 @@ app.addEventListener("change", (e) => {
   if (el.dataset.action === "prospect-ads") {
     attempt(async () => {
       await api(`/admin/prospects/${id}`, { method: "PATCH", body: { [el.dataset.field]: el.value } });
+      state.prospects = await api("/admin/prospects");
+      flash("ok", "Saved. Press Rewrite proposal to use it.");
+    });
+  }
+  if (el.dataset.action === "prospect-rank") {
+    const rows = [...app.querySelectorAll(`select[data-action=prospect-rank][data-id="${id}"]`)].map((x) => ({ query: x.dataset.query, bucket: x.value })).filter((r) => r.bucket !== "unknown");
+    attempt(async () => {
+      await api(`/admin/prospects/${id}`, { method: "PATCH", body: { rankings: rows } });
       state.prospects = await api("/admin/prospects");
       flash("ok", "Saved. Press Rewrite proposal to use it.");
     });

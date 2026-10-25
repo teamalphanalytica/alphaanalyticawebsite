@@ -301,6 +301,88 @@ export function adsSummary(p, audit) {
   };
 }
 
+/* ---------- where they show up on Google ---------- */
+
+export const RANK_BUCKETS = ["unknown", "top3", "top10", "later", "none"];
+export const RANK_TEXT = { top3: "In the top 3", top10: "On the first page", later: "Not on the first page", none: "Didn't find them", unknown: "Not checked" };
+
+/** The town: the second part of an address like "4 High St, Whitefield, M45 7AA", otherwise Manchester. */
+export function townOf(address) {
+  const parts = String(address || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const town = parts.find((x, i) => i > 0 && !/\d/.test(x));
+  return town && town.length <= 30 ? town : "Manchester";
+}
+
+/** The three searches a customer would make: the two main services, and the trade, each with the town. */
+export function searchesFor(p, niche) {
+  const extra = NICHE_EXTRA[niche?.id] || {};
+  const town = townOf(p.address);
+  const facts = p.audit?.checks?.facts;
+  const services = (facts?.headings || []).filter((t) => !GENERIC_HEADING.test(t) && t.length <= 30).slice(0, 2);
+  const names = (services.length >= 2 ? services : extra.services || []).slice(0, 2);
+  const trade = (niche?.label || "").replace(/ and .*/i, "").replace(/s$/i, "").toLowerCase();
+  return [...names.map((n) => `${n.toLowerCase()} ${town}`), ...(trade ? [`${trade} ${town}`] : [])].slice(0, 3);
+}
+
+export const googleSearchUrl = (q) => `https://www.google.co.uk/search?q=${encodeURIComponent(q)}&gl=uk&hl=en-GB`;
+
+export const bucketFor = (position) => (position == null ? "later" : position <= 3 ? "top3" : position <= 10 ? "top10" : "later");
+
+/** Tidy what the admin saved by hand or what the automatic check returned. */
+export function cleanRankings(input) {
+  return (Array.isArray(input) ? input : []).slice(0, 5).map((r) => {
+    const query = clean(r?.query, 100);
+    if (!query || !RANK_BUCKETS.includes(r?.bucket) || r.bucket === "unknown") return null;
+    const position = Number.isInteger(r.position) && r.position >= 1 && r.position <= 100 ? r.position : null;
+    return { query, bucket: r.bucket, position, map_pack: r.map_pack === true ? true : r.map_pack === false ? false : null, source: r.source === "serpapi" ? "serpapi" : "manual", checked_at: new Date().toISOString() };
+  }).filter(Boolean);
+}
+
+/** Where, in one page of Google results from the search service, this business appears. */
+export function parseSerp(data, { host, name }, offset = 0) {
+  const organic = Array.isArray(data?.organic_results) ? data.organic_results : [];
+  let position = null;
+  organic.forEach((r, i) => {
+    if (position !== null || !host) return;
+    const h = hostOf(String(r?.link || ""));
+    if (h && (h === host || h.endsWith("." + host))) position = offset + i + 1;
+  });
+  const lr = data?.local_results;
+  const places = Array.isArray(lr) ? lr : Array.isArray(lr?.places) ? lr.places : [];
+  const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const mapPack = places.some((pl) => (name && norm(pl?.title) && (norm(pl.title).includes(norm(name)) || norm(name).includes(norm(pl.title)))) || (host && hostOf(String(pl?.links?.website || pl?.website || "")) === host));
+  return { position, mapPack };
+}
+
+/** Optional automatic check through a Google results service (SERPAPI_KEY). Looks at the first two pages for each search. */
+export async function checkRankings(p, queries, { fetchImpl = fetch } = {}) {
+  const key = globalThis.Netlify?.env?.get?.("SERPAPI_KEY");
+  if (!key) return { skipped: "no SERPAPI_KEY" };
+  const host = p.website ? hostOf(p.website) : null;
+  try {
+    const out = await Promise.all(queries.map(async (query) => {
+      const pages = await Promise.all([0, 10].map(async (start) => {
+        const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&google_domain=google.co.uk&gl=uk&hl=en&location=${encodeURIComponent("Manchester, England, United Kingdom")}&start=${start}&api_key=${encodeURIComponent(key)}`;
+        const res = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) throw new Error(`Results service answered ${res.status}`);
+        return parseSerp(await res.json(), { host, name: p.name }, start);
+      }));
+      const position = pages.map((x) => x.position).find((x) => x !== null) ?? null;
+      const mapPack = pages.some((x) => x.mapPack);
+      return { query, bucket: position === null ? "none" : bucketFor(position), position, map_pack: mapPack, source: "serpapi" };
+    }));
+    return { rankings: cleanRankings(out) };
+  } catch (e) {
+    return { error: String(e.message).slice(0, 100) };
+  }
+}
+
+/** In plain words for Claude: only what was checked. */
+export function rankingsSummary(rankings) {
+  const r = (rankings || []).filter((x) => x.bucket !== "unknown");
+  return r.length ? r.map((x) => ({ search: x.query, result: RANK_TEXT[x.bucket], map_pack: x.map_pack === true ? "in the Google map results" : x.map_pack === false ? "not in the Google map results" : "not checked" })) : "not checked";
+}
+
 /* ---------- the proposal ---------- */
 
 const pitchPrice = () => clean(globalThis.Netlify?.env?.get?.("PITCH_PRICE_TEXT"), 200);
@@ -347,7 +429,14 @@ export function templateProposition(p, audit, niche) {
       ? { title: "No Google or Facebook adverts that we could find", detail: "We checked Google's and Facebook's public ad libraries and found nothing running. Competitors who do advertise are being seen first by people searching nearby." }
       : null;
   const running = adsSeen || tracked;
-  const findings = [...(adFinding ? [adFinding] : []), ...top].slice(0, 3);
+  const checked = (p.rankings || []).filter((r) => r.bucket && r.bucket !== "unknown");
+  const missing = checked.filter((r) => r.bucket === "later" || r.bucket === "none");
+  const rankFinding = checked.length && missing.length === checked.length
+    ? { title: "Local searches don't show your website on the first page", detail: `When we searched for ${missing.slice(0, 2).map((r) => `"${r.query}"`).join(" and ")}, your website wasn't on the first page of Google. Customers see directories and competitors first.` }
+    : checked.length && missing.length
+      ? { title: "Some local searches don't show you", detail: `For ${missing.slice(0, 2).map((r) => `"${r.query}"`).join(" and ")}, your website wasn't on the first page of Google, so people searching for that don't see you.` }
+      : null;
+  const findings = [...(rankFinding ? [rankFinding] : []), ...(adFinding ? [adFinding] : []), ...top].slice(0, 3);
   const extra = NICHE_EXTRA[niche?.id] || { services: ["Free quotes", "Repairs", "New work", "Call-outs"], job: "job", value: 1000 };
   const facts = audit?.checks?.facts || {};
   const concept = conceptFor(p, audit, niche, extra);
@@ -402,6 +491,7 @@ export function propositionRequest(p, audit, niche) {
     "About us, if you mention it: we are a small Manchester business, you deal with the founder, and every Monday our AI reviews each client's last week of results and recommends changes that a person checks and makes. Do not say the AI changes adverts by itself, and do not promise results, rankings or that we are \"always ahead of the competition\".",
     "Write in plain British English for a busy tradesperson or small-business owner. No jargon, no hype, no exclamation marks.",
     "Use ONLY the facts provided. Never invent statistics, rankings, competitor claims, revenue figures, reviews, guarantees or results. Never claim to have seen their ads, accounts or analytics. Describe website problems as things we noticed or could not find on the page, not as certainties about their business.",
+    "For Google search results, only use google_search_results: say where they appear only for searches that were checked; never claim a position for one that was not.",
     "For advertising, only say what the facts show. \"not checked\" means unknown: never claim they do or do not advertise. If an ad tag or pixel is on their website, say we saw it; never claim to have seen their actual ads unless checked by hand says running ads.",
     "Do not state any price unless one is given in the facts. If none is given, say the price per enquiry is agreed on a short call.",
     "Reply with ONE JSON object and nothing else, in exactly this shape:",
@@ -416,6 +506,7 @@ export function propositionRequest(p, audit, niche) {
     issues_we_observed: (audit?.issues || []).slice(0, 5).map((i) => ({ title: i.title, detail: i.detail })),
     advertising: adsSummary(p, audit),
     site_facts: audit?.checks?.facts || null,
+    google_search_results: rankingsSummary(p.rankings),
     price_wording: pitchPrice() || "none given",
   };
   return { system, user: "Facts about this prospect:\n" + JSON.stringify(facts, null, 2) };
@@ -557,7 +648,7 @@ const hash = (s) => {
 export async function polishTemplates(db, { fetchImpl = fetch, budgetMs = 15_000, limit = 8 } = {}) {
   if (!globalThis.Netlify?.env?.get?.("ANTHROPIC_API_KEY") || budgetMs < 4000) return { polished: 0 };
   const rows = await db.sql`
-    SELECT id, name, niche, website, audit, ads_google, ads_meta FROM prospects
+    SELECT id, name, niche, website, audit, ads_google, ads_meta, rankings FROM prospects
     WHERE proposition_by = 'template' AND status IN ('new','to_call') AND found_at > NOW() - INTERVAL '14 days'
     ORDER BY found_at DESC LIMIT ${limit}`;
   let polished = 0;

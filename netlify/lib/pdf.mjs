@@ -65,7 +65,7 @@ export function scoreRows(audit, extras = {}) {
   ];
 }
 
-export async function buildProposalPdf({ name, website, proposition: pr, audit, phone = "", date = new Date(), contact = "" }) {
+export async function buildProposalPdf({ name, website, proposition: pr, audit, rankings = [], rankingsSource = "Google", phone = "", date = new Date(), contact = "" }) {
   const doc = await PDFDocument.create();
   const reg = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -151,21 +151,36 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   y += Math.ceil(rows.length / 2) * 24 + 2;
   para("Green is something we saw working, red is something we could not find, grey means we couldn't tell from a public look.", { size: 8.5, color: SLATE, gap: 6 });
 
+  const ranked = (rankings || []).filter((r) => r.bucket && r.bucket !== "unknown").slice(0, 3);
+  if (ranked.length) {
+    heading(`Where you show up on ${rankingsSource}`);
+    const gap = 10, cw = (CW - gap * (ranked.length - 1)) / ranked.length;
+    const lines = ranked.map((r) => wrap(`"${r.query}"`, bold, 9, cw - 20).length);
+    const h = Math.max(...lines) * 11.5 + 56;
+    need(h + 24);
+    ranked.forEach((r, i) => {
+      const x = M + i * (cw + gap);
+      const good = r.bucket === "top3" || r.bucket === "top10";
+      rect(x, y, cw, h, TINT);
+      rect(x, y, 3, h, good ? GREEN : RED);
+      const qh = textIn(`"${r.query}"`, x + 12, y + 8, cw - 20, 9, bold, INK, 1.28);
+      const label = r.bucket === "top3" ? "In the top 3" : r.bucket === "top10" ? "On the first page" : r.bucket === "later" ? "Not on the first page" : "Not found";
+      rect(x + 12, y + 12 + qh, Math.min(cw - 24, bold.widthOfTextAtSize(label, 8.5) + 16), 14, good ? GREEN : RED);
+      text(label, x + 20, y + 15.5 + qh, 8.5, bold, WHITE);
+      const extra = [r.position ? `Position ${r.position}` : null, r.map_pack === true ? "In the map results" : r.map_pack === false ? "Not in the map results" : null].filter(Boolean).join(" · ".replace("·", "-"));
+      if (extra) textIn(extra, x + 12, y + 32 + qh, cw - 20, 8, reg, SLATE);
+    });
+    y += h + 6;
+    const when = new Date(rankings.find((r) => r.checked_at)?.checked_at || date).toLocaleDateString("en-GB");
+    para(`What a local customer sees when they search. Checked ${when}. Results vary a little by location and device.`, { size: 8.5, color: SLATE, gap: 6 });
+  }
+
   heading("What we noticed");
   for (const f of pr.findings) {
     need(56);
     rect(M, y + 1, 3, 13, GOLD);
     para(f.title, { font: bold, indent: 12, gap: 1 });
     para(f.detail, { indent: 12, color: SLATE, gap: 8 });
-  }
-
-  if (pr.plan && pr.plan.length) {
-    heading("What we would do");
-    pr.plan.forEach((item, i) => {
-      need(30);
-      text(String(i + 1), M, y, 10.5, bold, GOLD);
-      para(item, { indent: 18, gap: 4 });
-    });
   }
 
   /* ---------------- page 2: the new website ---------------- */
@@ -180,7 +195,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const ph = phone || cn.phone || "";
   const T = y;
   // desktop browser
-  const bw = CW, bh = 292;
+  const bw = CW, bh = 272;
   rect(M, T, bw, bh, WHITE, RULE);
   rect(M, T, bw, 16, rgb(0.93, 0.94, 0.97));
   [0, 1, 2].forEach((i) => page.drawCircle({ x: M + 10 + i * 9, y: top(T + 8), size: 2.3, color: GREY }));
@@ -200,21 +215,21 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   text(clip(ph ? `Call ${ph}` : "Call us now", bold, 7, 92), M + bw - 106, T + 24.5, 7, bold, MIDNIGHT);
   // hero
   const hy = T + 42;
-  rect(M, hy, bw, 116, MIDNIGHT);
+  rect(M, hy, bw, 108, MIDNIGHT);
   textIn(cn.tagline || pr.headline, M + 14, hy + 14, 290, 15, bold, WHITE, 1.2);
-  textIn(cn.subline || "", M + 14, hy + 72, 270, 7.5, reg, MIST);
-  rect(M + 14, hy + 90, 86, 17, GOLD);
-  text("Get a free quote", M + 24, hy + 95, 7.5, bold, MIDNIGHT);
-  rect(M + 108, hy + 90, 62, 17, MIDNIGHT, MIST);
-  text("Call now", M + 123, hy + 95, 7.5, bold, WHITE);
+  textIn(cn.subline || "", M + 14, hy + 68, 270, 7.5, reg, MIST);
+  rect(M + 14, hy + 84, 86, 17, GOLD);
+  text("Get a free quote", M + 24, hy + 89, 7.5, bold, MIDNIGHT);
+  rect(M + 108, hy + 84, 62, 17, MIDNIGHT, MIST);
+  text("Call now", M + 123, hy + 89, 7.5, bold, WHITE);
   // quote form
-  rect(M + bw - 182, hy + 10, 168, 96, WHITE);
+  rect(M + bw - 182, hy + 8, 168, 92, WHITE);
   text("Get your free quote", M + bw - 172, hy + 17, 8.5, bold, MIDNIGHT);
   ["Your name", "Phone number", "What do you need?"].forEach((l, i) => { rect(M + bw - 172, hy + 33 + i * 18, 148, 13, TINT, RULE); text(l, M + bw - 168, hy + 36.5 + i * 18, 6.5, reg, GREY); });
-  rect(M + bw - 172, hy + 88, 148, 13, GOLD);
-  text("Send my enquiry", M + bw - 128, hy + 91.5, 7, bold, MIDNIGHT);
+  rect(M + bw - 172, hy + 82, 148, 13, GOLD);
+  text("Send my enquiry", M + bw - 128, hy + 85.5, 7, bold, MIDNIGHT);
   // trust strip
-  const ty = hy + 116;
+  const ty = hy + 108;
   rect(M, ty, bw, 26, TINT);
   const trust = (cn.trust && cn.trust.length ? cn.trust : ["Your reviews here", "Your accreditations here"]).slice(0, 4);
   trust.forEach((t, i) => {
@@ -229,7 +244,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const cw4 = (bw - 28 - 3 * 8) / 4;
   svc.forEach((s2, i) => {
     const sx = M + 14 + i * (cw4 + 8);
-    rect(sx, sy + 14, cw4, 62, WHITE, RULE);
+    rect(sx, sy + 14, cw4, 52, WHITE, RULE);
     rect(sx, sy + 14, cw4, 3, GOLD);
     textIn(s2, sx + 7, sy + 24, cw4 - 14, 7.5, bold, INK);
     rect(sx + 7, sy + 46, cw4 - 24, 3, RULE);
@@ -242,7 +257,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   badge(M + bw - 6, sy + 18, 4);
 
   // phone
-  const PT = T + bh + 18;
+  const PT = T + bh + 14;
   const pw = 112, phh = 210, px = M + 8;
   rect(px, PT, pw, phh, WHITE, MIDNIGHT);
   rect(px + 36, PT + 3, 40, 3, MIDNIGHT);
@@ -276,6 +291,15 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   });
   y = Math.max(PT + phh, cy) + 6;
   text("Concept for illustration only. Logos, photos and wording are placeholders until we agree your design.", M, y, 7.5, reg, SLATE);
+  y += 8;
+  if (pr.plan && pr.plan.length) {
+    heading("What we would do");
+    pr.plan.forEach((item, i) => {
+      need(30);
+      text(String(i + 1), M, y, 10.5, bold, GOLD);
+      para(item, { indent: 18, gap: 4 });
+    });
+  }
 
   /* ---------------- page 3: benefits and value ---------------- */
   header(false);

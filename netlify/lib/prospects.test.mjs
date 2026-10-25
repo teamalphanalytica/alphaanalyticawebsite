@@ -223,3 +223,64 @@ test("Claude's concept and benefits are accepted when present and ignored when t
   const thin = parseProposition(JSON.stringify({ ...base, benefits: [{ title: "only one", why: "w", value: "v" }] }));
   assert.equal(thin.benefits, undefined);
 });
+
+test("the three searches a customer would make are built from the town and the services", async () => {
+  const { townOf, searchesFor, googleSearchUrl } = await import("./prospects.mjs");
+  assert.equal(townOf("4 High St, Whitefield, M45 7AA"), "Whitefield");
+  assert.equal(townOf(null), "Manchester");
+  assert.equal(townOf("M45 7AA"), "Manchester");
+  const q = searchesFor({ address: "4 High St, Whitefield, M45 7AA" }, NICHES[1]);
+  assert.deepEqual(q, ["boiler installation Whitefield", "boiler repairs Whitefield", "plumber Whitefield"]);
+  assert.match(googleSearchUrl("a b"), /google\.co\.uk\/search\?q=a%20b&gl=uk/);
+});
+
+test("saved rankings are cleaned: only known results, no junk", async () => {
+  const { cleanRankings } = await import("./prospects.mjs");
+  const r = cleanRankings([{ query: "plumber whitefield", bucket: "later" }, { query: "x", bucket: "bogus" }, { query: "y", bucket: "unknown" }, { query: "z", bucket: "top3", position: 2, map_pack: true }, { bucket: "top3" }]);
+  assert.deepEqual(r.map((x) => [x.query, x.bucket, x.position]), [["plumber whitefield", "later", null], ["z", "top3", 2]]);
+  assert.equal(cleanRankings("nope").length, 0);
+});
+
+test("a Google results page is read for the business's position and the map results", async () => {
+  const { parseSerp, checkRankings, bucketFor } = await import("./prospects.mjs");
+  const page = { organic_results: [{ link: "https://www.bark.com/x" }, { link: "https://smith.co.uk/boilers" }], local_results: { places: [{ title: "Smith Plumbing Ltd" }] } };
+  const r = parseSerp(page, { host: "smith.co.uk", name: "Smith Plumbing" }, 10);
+  assert.equal(r.position, 12);
+  assert.equal(r.mapPack, true);
+  assert.equal(parseSerp({ organic_results: [{ link: "https://other.com" }] }, { host: "smith.co.uk", name: "Smith" }).position, null);
+  assert.equal(bucketFor(2), "top3");
+  assert.equal(bucketFor(8), "top10");
+  assert.equal(bucketFor(14), "later");
+  assert.deepEqual(await checkRankings({ name: "A", website: "https://smith.co.uk" }, ["q"]), { skipped: "no SERPAPI_KEY" });
+  globalThis.Netlify = { env: { get: (k) => (k === "SERPAPI_KEY" ? "serp-test" : undefined) } };
+  try {
+    const urls = [];
+    const out = await checkRankings({ name: "Smith Plumbing", website: "https://smith.co.uk" }, ["boiler repair whitefield"], { fetchImpl: async (u) => { urls.push(u); return Response.json(u.includes("start=0") ? { organic_results: [{ link: "https://a.com" }] } : page); } });
+    assert.equal(out.rankings[0].position, 12);
+    assert.equal(out.rankings[0].bucket, "later");
+    assert.equal(out.rankings[0].source, "serpapi");
+    assert.ok(urls.every((u) => u.includes("google_domain=google.co.uk") && u.includes("gl=uk")));
+    const none = await checkRankings({ name: "X", website: "https://x.co.uk" }, ["q"], { fetchImpl: async () => Response.json({ organic_results: [] }) });
+    assert.equal(none.rankings[0].bucket, "none");
+    assert.ok((await checkRankings({ name: "X", website: "https://x.co.uk" }, ["q"], { fetchImpl: async () => new Response("no", { status: 500 }) })).error);
+  } finally { delete globalThis.Netlify; }
+});
+
+test("the proposal only mentions Google results that were checked", () => {
+  const audit = auditHtml("<html><body>hi</body></html>");
+  const find = (rankings) => JSON.stringify(templateProposition({ name: "A", rankings }, audit, NICHES[0]).findings);
+  assert.doesNotMatch(find([]), /first page of Google/);
+  assert.match(find([{ query: "roofer bolton", bucket: "later" }]), /roofer bolton/);
+  assert.doesNotMatch(find([{ query: "roofer bolton", bucket: "top3" }]), /first page of Google/);
+  assert.match(propositionRequest({ name: "A", rankings: [{ query: "q", bucket: "none" }] }, audit, NICHES[0]).user, /Didn't find them/);
+  assert.match(propositionRequest({ name: "A" }, audit, NICHES[0]).user, /"google_search_results": "not checked"/);
+});
+
+test("the proposal with Google results stays at three pages", async () => {
+  const { PDFDocument } = await import("pdf-lib");
+  const p = { name: "Smith Plumbing", website: "https://smith.co.uk", phone: "+441610000000" };
+  const audit = auditHtml("<html><head><title>x</title></head><body>Gas Safe registered. old</body></html>");
+  const rankings = ["a b c", "d e f", "g h i"].map((query) => ({ query, bucket: "later", position: null, map_pack: false, checked_at: new Date().toISOString() }));
+  const bytes = await buildProposalPdf({ name: p.name, website: p.website, audit, rankings, phone: "0161", proposition: templateProposition({ ...p, rankings }, audit, NICHES[1]), contact: "Jordan" });
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 3);
+});

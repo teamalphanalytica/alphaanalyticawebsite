@@ -73,7 +73,13 @@ test("admin can list, update, rewrite and download a proposal", async () => {
   assert.equal((await call(`/api/admin/prospects/${id}`, { method: "PATCH", body: { ads_google: "maybe" } })).status, 400);
   await call(`/api/admin/prospects/${id}`, { method: "PATCH", body: { ads_google: "yes", ads_meta: "no" } });
   assert.deepEqual(q(`SELECT ads_google, ads_meta, status FROM prospects WHERE id=${id}`)[0], { ads_google: "yes", ads_meta: "no", status: "replied" });
+  assert.equal((await call(`/api/admin/prospects/${id}`, { method: "PATCH", body: { rankings: [{ query: "boiler repairs whitefield", bucket: "later" }, { query: "x", bucket: "bogus" }] } })).status, 200);
+  assert.deepEqual(q(`SELECT jsonb_array_length(rankings) AS n, rankings->0->>'bucket' AS b FROM prospects WHERE id=${id}`)[0], { n: 1, b: "later" });
+  const noKey = await (await call(`/api/admin/prospects/${id}/rankings/check`, { method: "POST", body: {} })).json();
+  assert.equal(noKey.ok, false);
   const again = await (await call("/api/admin/prospects")).json();
+  assert.ok(again.prospects.find((x) => x.id === id).searches.length >= 1);
+  assert.equal(again.serp, false);
   assert.match(again.prospects.find((x) => x.id === id).ad_links.google, /adstransparency\.google\.com/);
   assert.equal((await call(`/api/admin/prospects/${id}/proposition`, { method: "POST", body: {} })).status, 200);
   const pdf = await call(`/api/admin/prospects/${id}/pdf`);

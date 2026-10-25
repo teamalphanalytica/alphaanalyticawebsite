@@ -271,3 +271,4 @@ table.health td{vertical-align:top}
 .prospect-ads-row select{width:auto;min-height:36px;padding:0 10px}
 .review-cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 @media (max-width:700px){.review-cols{grid-template-columns:1fr}}
+.rank-q{font-weight:600;flex:1 1 220px;min-width:0}
