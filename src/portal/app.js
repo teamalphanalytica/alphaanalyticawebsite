@@ -229,6 +229,14 @@ function screenPortal() {
 
 /* ---------- client views ---------- */
 
+/** Which ad platform an enquiry came from: the source label, or an ad click id captured with it. */
+function adPlatform({ source, has_gclid, has_fb }) {
+  const s = String(source || "");
+  if (/google|adwords|cpc/i.test(s) || has_gclid) return "google";
+  if (/facebook|^fb$|instagram|meta/i.test(s) || has_fb) return "meta";
+  return null;
+}
+
 function summarise(d) {
   const now = Date.now();
   const day = 86400000;
@@ -238,10 +246,18 @@ function summarise(d) {
   const cutoff = new Date(now - 30 * day).toISOString().slice(0, 10);
   const stats30 = d.stats.filter((s) => dayKey(s.day) >= cutoff);
   const spend = stats30.reduce((a, s) => a + s.spend_pence, 0);
-  const adEnquiries = stats30.reduce((a, s) => a + s.enquiries, 0);
+  // Count enquiries ourselves (genuine ones, credited to an ad) rather than trusting each platform's own count,
+  // which can include other conversion actions and disagree with what's billed.
+  const byAd = { google: 0, meta: 0 };
+  for (const l of real) {
+    if (now - new Date(l.received_at) >= 30 * day) continue;
+    const p = adPlatform(l);
+    if (p) byAd[p]++;
+  }
+  const adEnquiries = byAd.google + byAd.meta;
   const done = d.steps.filter((s) => s.status === "done").length;
   const next = d.steps.find((s) => s.status !== "done") || null;
-  return { last7, last30, spend, adEnquiries, done, total: d.steps.length, next, stats30 };
+  return { last7, last30, spend, adEnquiries, byAd, done, total: d.steps.length, next, stats30 };
 }
 
 function viewOverview() {
@@ -464,12 +480,13 @@ function viewAds() {
   const d = state.data;
   const names = { google: "Google", meta: "Facebook and Instagram" };
   const byPlatform = {};
-  for (const s of summarise(d).stats30) {
+  const sum = summarise(d);
+  for (const s of sum.stats30) {
     const p = (byPlatform[s.platform] ||= { spend: 0, clicks: 0, enq: 0 });
     p.spend += s.spend_pence;
     p.clicks += s.clicks;
-    p.enq += s.enquiries;
   }
+  for (const [k, n] of Object.entries(sum.byAd)) if (byPlatform[k]) byPlatform[k].enq = n;
   const rows = Object.entries(byPlatform).map(([k, p]) => `<tr>
       <td><b>${esc(names[k] || k)}</b></td><td class="num">${money(p.spend)}</td><td class="num">${p.clicks}</td>
       <td class="num">${p.enq}</td><td class="num">${p.enq ? money(p.spend / p.enq) : "–"}</td></tr>`).join("");
@@ -477,7 +494,7 @@ function viewAds() {
     <div class="panel">
       ${rows
         ? `<div class="tablewrap"><table><thead><tr><th>Platform</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Enquiries</th><th class="num">Cost per enquiry</th></tr></thead><tbody>${rows}</tbody></table></div>
-           <p class="muted small mt">Numbers are updated automatically where your ad account is connected, otherwise by Alpha Analytica each week.</p>`
+           <p class="muted small mt">Spend and clicks come from Google and Facebook. Enquiries are the genuine calls and forms in your Enquiries tab that came from each platform's ads, so they match what you're billed for.</p>`
         : `<p class="muted">Your ad results will appear here once your campaigns are live.</p>`}
     </div>` + connectPanel();
 }
@@ -959,6 +976,8 @@ function viewAdminClient() {
         <div class="field"><label for="mc">Meta ad account id</label><input id="mc" name="meta_ad_account_id" value="${esc(client.meta_ad_account_id || "")}" placeholder="1234567890"></div>
         <div class="field"><label for="px">Facebook pixel (dataset) id, for sending enquiries back</label><input id="px" name="meta_pixel_id" value="${esc(client.meta_pixel_id || "")}" placeholder="1234567890"></div>
         <div class="field"><label for="gn">Google conversion action name</label><input id="gn" name="google_conversion_name" value="${esc(client.google_conversion_name || "Portal enquiry")}" maxlength="100"></div>
+        <div class="field"><label for="gcn">Google conversion name for new customers (blank = off)</label><input id="gcn" name="google_customer_conversion_name" value="${esc(client.google_customer_conversion_name || "")}" maxlength="100" placeholder="Portal customer"></div>
+        <div class="field"><label for="cv">Value of a new customer (£)</label><input id="cv" name="customer_value" type="number" min="0" step="0.01" value="${client.customer_value_pence == null ? "" : esc((client.customer_value_pence / 100).toFixed(2))}" placeholder="400.00"></div>
         <div class="field"><label for="pp">Price per enquiry (£)</label><input id="pp" name="price_per_enquiry" type="number" min="0" step="0.01" value="${client.price_per_enquiry_pence == null ? "" : esc((client.price_per_enquiry_pence / 100).toFixed(2))}" placeholder="25.00"></div>
         <div class="field"><label for="cm">Shortest call that counts as an enquiry (seconds)</label><input id="cm" name="call_min_seconds" type="number" min="0" max="3600" value="${esc(client.call_min_seconds)}"></div>
         <button class="btn btn-primary" type="submit">Save</button>
@@ -1427,7 +1446,8 @@ app.addEventListener("submit", (e) => {
       return attempt(async () => {
         await api(`/admin/clients/${id}/accounts`, { method: "PATCH", body: {
           google_customer_id: f.google_customer_id, meta_ad_account_id: f.meta_ad_account_id, call_min_seconds: f.call_min_seconds,
-          price_per_enquiry: f.price_per_enquiry, meta_pixel_id: f.meta_pixel_id, google_conversion_name: f.google_conversion_name } });
+          price_per_enquiry: f.price_per_enquiry, meta_pixel_id: f.meta_pixel_id, google_conversion_name: f.google_conversion_name,
+          google_customer_conversion_name: f.google_customer_conversion_name, customer_value: f.customer_value } });
         await loadAdminClient(id);
         flash("ok", "Saved.");
       });

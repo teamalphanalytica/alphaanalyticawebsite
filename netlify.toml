@@ -23,3 +23,9 @@
   for = "/api/*"
   [headers.values]
     Cache-Control = "no-store"
+
+# Call tracking script that client websites include: cache briefly so fixes reach sites quickly
+[[headers]]
+  for = "/call-tracking.js"
+  [headers.values]
+    Cache-Control = "public, max-age=3600"

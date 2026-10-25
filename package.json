@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test netlify/lib/util.test.mjs netlify/lib/billing.test.mjs netlify/lib/calls.test.mjs"
+    "test": "node --test netlify/lib/util.test.mjs netlify/lib/billing.test.mjs netlify/lib/calls.test.mjs",
+    "test:db": "node --import ./tests/db/register.mjs --test tests/db/conversions.test.mjs"
   },
   "dependencies": {
     "@netlify/database": "latest",

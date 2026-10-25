@@ -9,6 +9,11 @@
  * In each client account, create a conversion action once:
  *   Goals > Conversions > New conversion action > Import > "Other data sources or CRMs" > "Track conversions from clicks",
  *   named exactly "Portal enquiry" (or whatever name is saved for that client in the portal).
+ * Optional second action for enquiries that became paying customers: create another the same way, named
+ *   "Portal customer", and save that name for the client in the portal (leave it blank there to switch it off).
+ *
+ * What gets sent: only enquiries we're confident are genuine (the client marked them as qualified or a
+ * customer, or the dispute window passed with no dispute). Each is valued at the client's price per enquiry.
  */
 var PORTAL = "https://alpha-analytica.netlify.app";
 var PUSH_KEY = "PASTE_ADS_PUSH_KEY_HERE";
@@ -57,7 +62,7 @@ function uploadConversions() {
   var byAccount = {};
   list.forEach(function (c) { (byAccount[c.customer_id] = byAccount[c.customer_id] || []).push(c); });
 
-  var done = [];
+  var done = [], doneCustomers = [];
   var accounts = AdsManagerApp.accounts().get();
   while (accounts.hasNext()) {
     var account = accounts.next();
@@ -70,19 +75,19 @@ function uploadConversions() {
     upload.forOfflineConversions();
     items.forEach(function (c) {
       upload.append({ "Google Click ID": c.gclid, "Conversion name": c.conversion_name,
-        "Conversion time": c.conversion_time, "Conversion value": 1, "Conversion currency": "GBP" });
+        "Conversion time": c.conversion_time, "Conversion value": c.value || 1, "Conversion currency": "GBP" });
     });
     if (AdsApp.getExecutionInfo().isPreview()) {
       Logger.log("Preview: would upload " + items.length + " conversions for " + account.getCustomerId());
       continue;
     }
     upload.apply();
-    items.forEach(function (c) { done.push(c.id); });
+    items.forEach(function (c) { (c.kind === "customer" ? doneCustomers : done).push(c.id); });
     Logger.log("Uploaded " + items.length + " conversions for " + account.getCustomerId());
   }
-  if (done.length) {
+  if (done.length || doneCustomers.length) {
     var ack = UrlFetchApp.fetch(PORTAL + "/api/conversions/google/ack", { method: "post", contentType: "application/json",
-      headers: { "x-push-key": PUSH_KEY }, payload: JSON.stringify({ ids: done }), muteHttpExceptions: true });
+      headers: { "x-push-key": PUSH_KEY }, payload: JSON.stringify({ ids: done, customer_ids: doneCustomers }), muteHttpExceptions: true });
     Logger.log("Confirmed with portal: " + ack.getContentText());
   }
 }

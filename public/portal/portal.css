@@ -35,7 +35,7 @@ button{cursor:pointer}
 .mark{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:50%;background:var(--amber);color:var(--midnight);font:500 1.5rem/1 Georgia,"Times New Roman",serif;padding-bottom:3px}
 
 /* ---------- app shell ---------- */
-.shell{display:grid;grid-template-columns:var(--side) minmax(0,1fr);min-height:100vh}
+.shell{display:grid;grid-template-columns:var(--side) minmax(0,1fr);min-height:100vh;background:linear-gradient(90deg,var(--midnight) var(--side),transparent var(--side))}
 .side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;background:var(--midnight);color:var(--mist);padding:24px 16px 16px;overflow-y:auto}
 .side-top{padding:4px 12px 24px;color:#fff}
 .nav{display:flex;flex-direction:column;gap:4px}
@@ -201,7 +201,7 @@ table.health td{vertical-align:top}
 
 /* ---------- small screens ---------- */
 @media (max-width:960px){
-  .shell{display:block}
+  .shell{display:block;background:none}
   .side{position:sticky;top:0;z-index:20;height:auto;display:grid;grid-template-columns:1fr auto;grid-template-areas:"top out" "nav nav";align-items:center;gap:0 12px;padding:12px 16px 8px;overflow:visible}
   .side-top{grid-area:top;padding:0}
   .side-foot{grid-area:out;margin:0;padding:0;border:0;display:block}

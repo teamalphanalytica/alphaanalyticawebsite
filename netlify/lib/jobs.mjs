@@ -149,6 +149,7 @@ export async function sendMetaConversions(db) {
            c.meta_pixel_id
     FROM leads l JOIN clients c ON c.id = l.client_id
     WHERE l.meta_sent_at IS NULL AND l.status <> 'spam' AND c.meta_pixel_id IS NOT NULL
+      AND (l.dispute_state IS NULL OR l.dispute_state = 'rejected') AND l.source IS DISTINCT FROM 'Test enquiry'
       AND l.received_at < NOW() - make_interval(hours => ${delay}::int)
       AND l.received_at > NOW() - INTERVAL '6 days 20 hours'
     ORDER BY l.received_at LIMIT 1000`;

@@ -450,6 +450,44 @@ export function hashPhone(phone) {
   return e164 ? sha256(e164.slice(1)) : null;
 }
 
+/** Value Google is told an enquiry is worth: the client's price per enquiry, or 1 if no price is set. */
+export function googleConversionValue(pence) {
+  const p = Number(pence);
+  return Number.isFinite(p) && p > 0 ? Math.round(p) / 100 : 1;
+}
+
+/** A visitor tapped a phone number on a client website: keep the ad click ids so the call that follows can be credited. */
+export function parseCallClick(body) {
+  if (!body || typeof body !== "object") return null;
+  const raw = String(body.number || "").replace(/[\s().-]/g, "");
+  const number = normaliseUkPhone(raw) || (/^\+[1-9]\d{7,14}$/.test(raw) ? raw : null);
+  if (!number) return null;
+  const ids = clickIds(body);
+  if (!ids.gclid && !ids.gbraid && !ids.wbraid && !ids.fbc) return null; // nothing to credit
+  let page = null;
+  try {
+    const u = new URL(String(body.page_url || ""));
+    if (u.protocol === "https:" || u.protocol === "http:") page = (u.origin + u.pathname).slice(0, 500);
+  } catch { /* no page */ }
+  return { number, ...ids, page_url: page };
+}
+
+/**
+ * Pick the tap-to-call that led to this call: taps on the dialled number in the two minutes before it rang.
+ * Only credit the call when every tap in that window came from the same ad click, so a guess is never made.
+ */
+export function pickCallClick(clicks, callAt, windowSeconds = 120) {
+  const t = new Date(callAt).getTime();
+  const near = (clicks || []).filter((c) => {
+    const d = t - new Date(c.clicked_at).getTime();
+    return d >= 0 && d <= windowSeconds * 1000;
+  });
+  if (!near.length) return null;
+  const who = new Set(near.map((c) => c.gclid || c.gbraid || c.wbraid || c.fbc));
+  if (who.size !== 1) return null;
+  return near.reduce((a, b) => (new Date(b.clicked_at) > new Date(a.clicked_at) ? b : a));
+}
+
 /** One Meta Conversions API "Lead" event for an enquiry. */
 export function metaLeadEvent(lead) {
   const user = {};

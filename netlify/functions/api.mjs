@@ -14,13 +14,13 @@ import { getUser } from "@netlify/identity";
 import {
   LEAD_STATUSES, STEP_STATUSES, PLATFORMS, DEFAULT_STEPS, HANGUP_TWIML,
   clean, toInt, isEmail, isE164, isDay, safeUrl, slugify, parseLead, readBody, sameOrigin, parseAdminEmails,
-  safeEqual, normaliseUkPhone, monthRange, toCsv, googleConversionTime, connectionStates, cleanIntake, validateNewClient, launchChecklist, disputeAllowed, DISPUTE_REASONS, verifyStripeSignature, clientWelcomeMessage, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
+  safeEqual, normaliseUkPhone, monthRange, googleConversionValue, parseCallClick, pickCallClick, toCsv, googleConversionTime, connectionStates, cleanIntake, validateNewClient, launchChecklist, disputeAllowed, DISPUTE_REASONS, verifyStripeSignature, clientWelcomeMessage, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
 } from "../lib/util.mjs";
 import { stripeOn, billingMode, disputeDays, createPaymentSetup, runBilling, approveInvoice, discardInvoice, handleStripeEvent } from "../lib/billing.mjs";
 import { sendEmail } from "../lib/email.mjs";
 import { recordingOn, recordingNotice, retentionDays, handleRecordingCallback, startTranscript, summariseCall, fetchRecording } from "../lib/calls.mjs";
 import { overviewData, performanceData, feedData, callsData, callDetail } from "../lib/admin-data.mjs";
-import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions, conversionDelayHours } from "../lib/jobs.mjs";
+import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
 
@@ -38,6 +38,12 @@ export default async (req) => {
     if (parts[0] === "ingest" && parts.length === 1) {
       if (method !== "POST") return fail(405, "Use POST.");
       return await ingest(req, url, db);
+    }
+
+    // A visitor tapped a tracking number on a client website (public: sent by the browser, no secret)
+    if (parts[0] === "call-click" && parts.length === 1) {
+      if (method !== "POST") return fail(405, "Use POST.");
+      return await callClick(req, db);
     }
 
     // Ad results pushed in by a Google Ads script, a Meta connector, etc. (shared secret)
@@ -143,7 +149,8 @@ async function portal(db, me, url) {
     SELECT id, position, title, detail, status, updated_at
     FROM build_steps WHERE client_id = ${clientId} ORDER BY position`;
   const leads = await db.sql`
-    SELECT id, received_at, type, name, email, phone, message, source, campaign, status, value_pence, dispute_state, dispute_reason
+    SELECT id, received_at, type, name, email, phone, message, source, campaign, status, value_pence, dispute_state, dispute_reason,
+           (gclid IS NOT NULL OR gbraid IS NOT NULL OR wbraid IS NOT NULL) AS has_gclid, (fbc IS NOT NULL OR fbp IS NOT NULL) AS has_fb
     FROM leads WHERE client_id = ${clientId} AND source IS DISTINCT FROM 'Test enquiry' ORDER BY received_at DESC LIMIT 200`;
   const stats = await db.sql`
     SELECT day, platform, spend_pence, impressions, clicks, enquiries
@@ -195,7 +202,8 @@ async function updateLead(req, db, me, leadId) {
   if (!allowed) return fail(404, "Lead not found."); // same answer as missing, so ids can't be probed
 
   await db.sql`
-    UPDATE leads SET status = ${status}, value_pence = COALESCE(${value}, value_pence)
+    UPDATE leads SET status = ${status}, value_pence = COALESCE(${value}, value_pence),
+      customer_at = CASE WHEN ${status} = 'customer' THEN COALESCE(customer_at, NOW()) ELSE customer_at END
     WHERE id = ${leadId}`;
   return json({ ok: true });
 }
@@ -296,7 +304,7 @@ async function admin(req, db, p, method) {
   if (clientId && p.length === 2 && method === "GET") {
     const [client] = await db.sql`
       SELECT id, name, sector, website_url, preview_url, ingest_key,
-             google_customer_id, meta_ad_account_id, call_min_seconds, intake, price_per_enquiry_pence, meta_pixel_id, google_conversion_name,
+             google_customer_id, meta_ad_account_id, call_min_seconds, intake, price_per_enquiry_pence, meta_pixel_id, google_conversion_name, google_customer_conversion_name, customer_value_pence,
              google_last_push, meta_last_sync, meta_last_error, payment_ready
       FROM clients WHERE id = ${clientId}`;
     if (!client) return fail(404, "Business not found.");
@@ -372,13 +380,18 @@ async function admin(req, db, p, method) {
     if (minSeconds === null) return fail(400, "Call length must be a whole number of seconds.");
     const pixel = clean(value?.meta_pixel_id, 30)?.replace(/\D/g, "") || null;
     const convName = clean(value?.google_conversion_name, 100) || "Portal enquiry";
+    const custName = clean(value?.google_customer_conversion_name, 100) || null;
+    const custText = clean(value?.customer_value, 12);
+    const custValue = custText ? Math.round(Number(custText) * 100) : null;
+    if (custText && (!Number.isFinite(custValue) || custValue < 0 || custValue > 100_000_000)) return fail(400, "Customer value must be an amount in pounds, like 400.");
     const priceText = clean(value?.price_per_enquiry, 12);
     const price = priceText ? Math.round(Number(priceText) * 100) : null;
     if (priceText && (!Number.isFinite(price) || price < 0 || price > 10_000_000)) return fail(400, "Price per enquiry must be an amount in pounds, like 25.");
     try {
       await db.sql`
         UPDATE clients SET google_customer_id = ${google}, meta_ad_account_id = ${meta}, call_min_seconds = ${minSeconds},
-          price_per_enquiry_pence = ${price}, meta_pixel_id = ${pixel}, google_conversion_name = ${convName}
+          price_per_enquiry_pence = ${price}, meta_pixel_id = ${pixel}, google_conversion_name = ${convName},
+          google_customer_conversion_name = ${custName}, customer_value_pence = ${custValue}
         WHERE id = ${clientId}`;
     } catch {
       return fail(409, "Another client already uses one of those account ids.");
@@ -676,6 +689,41 @@ function publicBase(req) {
   return (Netlify.env.get("PUBLIC_BASE_URL") || new URL(req.url).origin).replace(/\/$/, "");
 }
 
+// Remember the ad click behind a tap-to-call for a few minutes, so the call can be credited to it
+async function callClick(req, db) {
+  const parsed = await readBody(req, 4_000);
+  const c = parsed.value ? parseCallClick(parsed.value) : null;
+  if (!c) return new Response(null, { status: 204 });
+  try {
+    const [known] = await db.sql`SELECT 1 AS ok FROM tracking_numbers WHERE number = ${c.number}`;
+    if (!known) return new Response(null, { status: 204 });
+    // Ignore floods: a real number is not tapped dozens of times a minute
+    const [{ n }] = await db.sql`SELECT COUNT(*)::int AS n FROM call_clicks WHERE number = ${c.number} AND clicked_at > NOW() - INTERVAL '5 minutes'`;
+    if (n < 20) {
+      await db.sql`
+        INSERT INTO call_clicks (number, gclid, gbraid, wbraid, fbc, fbp, page_url)
+        VALUES (${c.number}, ${c.gclid}, ${c.gbraid}, ${c.wbraid}, ${c.fbc}, ${c.fbp}, ${c.page_url})`;
+    }
+    if (Math.random() < 0.02) await db.sql`DELETE FROM call_clicks WHERE clicked_at < NOW() - INTERVAL '2 days'`;
+  } catch (e) {
+    console.error("call click failed", e);
+  }
+  return new Response(null, { status: 204 });
+}
+
+// Credit a call to the website tap that led to it, if there is exactly one candidate
+async function creditCallToClick(db, callSid, number) {
+  const clicks = await db.sql`
+    SELECT id, gclid, gbraid, wbraid, fbc, fbp, page_url, clicked_at FROM call_clicks
+    WHERE number = ${number} AND used_at IS NULL AND clicked_at > NOW() - INTERVAL '3 minutes'`;
+  const hit = pickCallClick(clicks, new Date());
+  if (!hit) return;
+  await db.sql`UPDATE call_clicks SET used_at = NOW() WHERE id = ${hit.id}`;
+  await db.sql`
+    UPDATE calls SET gclid = ${hit.gclid}, gbraid = ${hit.gbraid}, wbraid = ${hit.wbraid}, fbc = ${hit.fbc}, fbp = ${hit.fbp}, page_url = ${hit.page_url}
+    WHERE call_sid = ${callSid}`;
+}
+
 // Someone dialled a tracking number: forward the call, and log it
 async function twilioVoice(req, db) {
   const params = await twilioParams(req);
@@ -701,6 +749,7 @@ async function twilioVoice(req, db) {
       INSERT INTO calls (client_id, tracking_number_id, call_sid, from_number, label)
       VALUES (${row.client_id}, ${row.id}, ${sid}, ${clean(params.From, 30)}, ${row.label})
       ON CONFLICT (call_sid) DO NOTHING`;
+    await creditCallToClick(db, sid, to);
   } catch (e) {
     console.error("call log failed", e);
   }
@@ -742,14 +791,15 @@ async function twilioStatus(req, db) {
     const updated = await db.sql`
       UPDATE calls SET status = ${status}, duration_seconds = ${seconds}
       WHERE call_sid = ${sid}
-      RETURNING client_id, from_number, label`;
+      RETURNING client_id, from_number, label, gclid, gbraid, wbraid, fbc, fbp, page_url`;
     const call = updated[0];
     if (call) {
       const [client] = await db.sql`SELECT call_min_seconds FROM clients WHERE id = ${call.client_id}`;
       if (client && countsAsEnquiry(status, seconds, client.call_min_seconds)) {
         await db.sql`
-          INSERT INTO leads (client_id, type, phone, message, source, call_sid)
-          VALUES (${call.client_id}, 'call', ${call.from_number}, ${`Phone call, ${seconds} seconds`}, ${call.label}, ${sid})
+          INSERT INTO leads (client_id, type, phone, message, source, call_sid, gclid, gbraid, wbraid, fbc, fbp, page_url)
+          VALUES (${call.client_id}, 'call', ${call.from_number}, ${`Phone call, ${seconds} seconds`}, ${call.label}, ${sid},
+                  ${call.gclid}, ${call.gbraid}, ${call.wbraid}, ${call.fbc}, ${call.fbp}, ${call.page_url})
           ON CONFLICT (call_sid) DO NOTHING`;
       }
     }
@@ -932,25 +982,45 @@ async function saveOwnAccounts(req, db, me) {
 
 /* ---------- genuine enquiries back to Google as offline conversions ---------- */
 
-// The Google Ads script asks for enquiries with a Google click id that are past the spam-review window
+// The Google Ads script asks for enquiries to upload. Only ones we're confident are genuine go:
+// confirmed by the client (qualified or customer), or past the dispute window with no open dispute.
+// Google can't easily take a conversion back, so we wait rather than retract later.
 async function googleConversionsExport(req, db) {
   const expected = Netlify.env.get("ADS_PUSH_KEY");
   const key = clean(req.headers.get("x-push-key"), 200);
   if (!expected || !key || !safeEqual(key, expected)) return fail(401, "Unauthorised.");
-  const delay = conversionDelayHours();
-  const rows = await db.sql`
-    SELECT l.id, l.gclid, l.received_at, c.google_customer_id, c.google_conversion_name
+  const days = disputeDays();
+  const enquiries = await db.sql`
+    SELECT l.id, l.gclid, l.received_at, c.google_customer_id, c.google_conversion_name, c.price_per_enquiry_pence
     FROM leads l JOIN clients c ON c.id = l.client_id
     WHERE l.gclid IS NOT NULL AND l.google_sent_at IS NULL AND l.status <> 'spam'
+      AND (l.dispute_state IS NULL OR l.dispute_state = 'rejected')
+      AND l.source IS DISTINCT FROM 'Test enquiry'
       AND c.google_customer_id IS NOT NULL
-      AND l.received_at < NOW() - make_interval(hours => ${delay}::int)
-      AND l.received_at > NOW() - INTERVAL '60 days'
+      AND (l.status IN ('qualified', 'customer') OR l.received_at < NOW() - make_interval(days => ${days}::int))
+      AND l.received_at > NOW() - INTERVAL '80 days'
+    ORDER BY l.received_at LIMIT 2000`;
+  const customers = await db.sql`
+    SELECT l.id, l.gclid, l.received_at, l.customer_at, c.google_customer_id, c.google_customer_conversion_name,
+           c.customer_value_pence, c.price_per_enquiry_pence
+    FROM leads l JOIN clients c ON c.id = l.client_id
+    WHERE l.status = 'customer' AND l.gclid IS NOT NULL AND l.google_customer_sent_at IS NULL
+      AND c.google_customer_id IS NOT NULL AND c.google_customer_conversion_name IS NOT NULL
+      AND l.received_at > NOW() - INTERVAL '80 days'
     ORDER BY l.received_at LIMIT 2000`;
   return json({
-    conversions: rows.map((r) => ({
-      id: r.id, customer_id: r.google_customer_id, gclid: r.gclid,
-      conversion_name: r.google_conversion_name, conversion_time: googleConversionTime(r.received_at),
-    })),
+    conversions: [
+      ...enquiries.map((r) => ({
+        id: r.id, kind: "enquiry", customer_id: r.google_customer_id, gclid: r.gclid,
+        conversion_name: r.google_conversion_name, conversion_time: googleConversionTime(r.received_at),
+        value: googleConversionValue(r.price_per_enquiry_pence),
+      })),
+      ...customers.map((r) => ({
+        id: r.id, kind: "customer", customer_id: r.google_customer_id, gclid: r.gclid,
+        conversion_name: r.google_customer_conversion_name, conversion_time: googleConversionTime(r.customer_at || r.received_at),
+        value: googleConversionValue(r.customer_value_pence ?? r.price_per_enquiry_pence),
+      })),
+    ],
   });
 }
 
@@ -960,8 +1030,15 @@ async function googleConversionsAck(req, db) {
   const key = clean(req.headers.get("x-push-key"), 200);
   if (!expected || !key || !safeEqual(key, expected)) return fail(401, "Unauthorised.");
   const { value } = await readBody(req, 100_000);
-  const ids = (Array.isArray(value?.ids) ? value.ids : []).map((v) => toInt(v, { min: 1 })).filter(Boolean).slice(0, 2000);
-  if (!ids.length) return json({ updated: 0 });
-  const done = await db.sql`UPDATE leads SET google_sent_at = NOW() WHERE id = ANY(${ids}) AND google_sent_at IS NULL RETURNING id`;
-  return json({ updated: done.length });
+  const list = (v) => (Array.isArray(v) ? v : []).map((x) => toInt(x, { min: 1 })).filter(Boolean).slice(0, 2000);
+  const ids = list(value?.ids);
+  const customerIds = list(value?.customer_ids);
+  let updated = 0;
+  if (ids.length) {
+    updated += (await db.sql`UPDATE leads SET google_sent_at = NOW() WHERE id = ANY(${ids}) AND google_sent_at IS NULL RETURNING id`).length;
+  }
+  if (customerIds.length) {
+    updated += (await db.sql`UPDATE leads SET google_customer_sent_at = NOW() WHERE id = ANY(${customerIds}) AND google_customer_sent_at IS NULL RETURNING id`).length;
+  }
+  return json({ updated });
 }
