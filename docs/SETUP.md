@@ -118,3 +118,6 @@ Off until you switch it on. Callers always hear a notice first ("This call may b
 5. If Twilio rejects the language, set `TRANSCRIPT_LANGUAGE` (default `en-GB`; try `en-US`). It can't be changed once the service exists, so delete the `alpha-analytica-calls` service in Twilio first.
 
 Check the first real call: in the transcript "Caller" is the person who rang and "Business" is the client's phone. Recordings and transcripts are only visible to admins, from Admin > Calls. Your privacy notice already covers this; tell clients in your agreement that calls to their tracking number are recorded.
+
+## Claude Ads (paid-media audits and plans)
+`.claude/settings.json` adds the open-source [Claude Ads](https://github.com/AgriciDaniel/claude-ads) plugin (MIT) to this project. When you open the project in Claude Code it asks you to trust the project and then installs the plugin. Use it with prompts like "audit this client's Google Ads setup" or `/claude-ads:ads audit google`. It is read-only by default; keep it that way for client accounts unless you have approved a specific change.
