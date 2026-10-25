@@ -69,6 +69,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const doc = await PDFDocument.create();
   const reg = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const serif = await doc.embedFont(StandardFonts.TimesRomanBold);
   const W = 595.28, H = 841.89, M = 44, CW = W - M * 2;
   let page, y;
 
@@ -87,11 +88,11 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     if (first) {
       rect(0, 0, W, 118, MIDNIGHT);
       rect(0, 118, W, 3, GOLD);
-      page.drawText("ALPHA ANALYTICA", { x: M, y: H - 36, size: 9.5, font: bold, color: GOLD });
+      page.drawText("Alpha Analytica", { x: M, y: H - 38, size: 12, font: serif, color: GOLD });
       page.drawText("Websites and adverts. You pay per genuine enquiry.", { x: W - M - reg.widthOfTextAtSize("Websites and adverts. You pay per genuine enquiry.", 8.5), y: H - 36, size: 8.5, font: reg, color: MIST });
       rect(M, 46, W - M * 2, 0.6, rgb(0.2, 0.25, 0.4));
       page.drawText("Proposal for", { x: M, y: H - 70, size: 10, font: reg, color: MIST });
-      page.drawText(clip(name, bold, 24, CW), { x: M, y: H - 96, size: 24, font: bold, color: WHITE });
+      page.drawText(clip(name, serif, 28, CW), { x: M, y: H - 98, size: 28, font: serif, color: WHITE });
       page.drawText(whenText, { x: W - M - reg.widthOfTextAtSize(whenText, 10), y: H - 70, size: 10, font: reg, color: MIST });
       y = 121 + 26;
     } else {
@@ -112,7 +113,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     need(80);
     y += 4;
     rect(M, y + 1, 4, 13, GOLD);
-    text(t, M + 11, y, 13, bold, MIDNIGHT);
+    text(t, M + 11, y, 14.5, serif, MIDNIGHT);
     y += 19;
     rect(M, y, CW, 1, RULE);
     y += 12;
@@ -157,10 +158,9 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     BRING.forEach(([t, d], i) => {
       const r = Math.floor(i / 3), c = i % 3;
       const x = M + c * (gw3 + 10), yy = y + (r ? hs[0] + 8 : 0);
-      rect(x, yy, gw3, hs[r], TINT);
-      rect(x, yy, gw3, 3, GOLD);
-      const th = textIn(t, x + 11, yy + 11, gw3 - 22, 9.5, bold, MIDNIGHT, 1.25);
-      textIn(d, x + 11, yy + 13 + th, gw3 - 22, 8.5, reg, SLATE, 1.3);
+      rect(x, yy, gw3, 1.2, MIDNIGHT);
+      const th = textIn(t, x + 1, yy + 9, gw3 - 12, 10, bold, MIDNIGHT, 1.25);
+      textIn(d, x + 1, yy + 11 + th, gw3 - 12, 8.5, reg, SLATE, 1.3);
     });
     y += hs[0] + hs[1] + 18;
   };
@@ -177,8 +177,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     const hw = (CW - 14) / 2;
     BRING.forEach(([t], i) => {
       const x = M + (i % 2) * (hw + 14), yy = y + Math.floor(i / 3 * 0) + (i >> 1) * 30;
-      rect(x, yy, hw, 26, TINT);
-      rect(x, yy, 3, 26, GOLD);
+      rect(x, yy, hw, 0.8, MIDNIGHT);
       text(clip(t, bold, 9.5, hw - 18), x + 11, yy + 4, 9.5, bold, MIDNIGHT);
       text(clip(BRING_SHORT[i], reg, 8, hw - 18), x + 11, yy + 16, 8, reg, SLATE);
     });
@@ -188,7 +187,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
 
   /* ---------------- page 1: where you stand ---------------- */
   header(true);
-  para(pr.headline, { size: 20, font: bold, color: MIDNIGHT, gap: 6, lead: 1.22 });
+  para(pr.headline, { size: 22, font: serif, color: MIDNIGHT, gap: 6, lead: 1.22 });
   const sv = pr.short_version;
   if (sv) {
     const rows2 = [["What we found", sv.found], ["What we'd do", sv.plan], ["What it costs", sv.cost]];
@@ -214,7 +213,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   rows.forEach((r, i) => {
     const cx = M + (i % 2) * colW;
     const ct = y + Math.floor(i / 2) * 24;
-    rect(cx, ct - 3, colW - 8, 21, TINT);
+    rect(cx, ct + 18, colW - 14, 0.6, RULE);
     tick(cx + 14, ct + 7.5, r[1]);
     text(r[0], cx + 28, ct + 3, 10, reg, INK);
   });
@@ -259,7 +258,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   /* ---------------- page 2: the new website ---------------- */
   header(false);
   rect(M, y + 1, 4, 13, GOLD);
-  text("What your new website could look like", M + 11, y, 13, bold, MIDNIGHT);
+  text("What your new website could look like", M + 11, y, 14.5, serif, MIDNIGHT);
   y += 19;
   rect(M, y, CW, 1, RULE);
   y += 8;
@@ -378,7 +377,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   /* ---------------- page 3: benefits and value ---------------- */
   header(false);
   rect(M, y + 1, 4, 13, GOLD);
-  text("What you get", M + 11, y, 13, bold, MIDNIGHT);
+  text("What you get", M + 11, y, 14.5, serif, MIDNIGHT);
   y += 19;
   rect(M, y, CW, 1, RULE);
   y += 10;
@@ -393,7 +392,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     const l3 = wrap(b.value, reg, size, cols[2] - 12);
     const h = Math.max(l1.length, l2.length, l3.length) * size * 1.3 + 9;
     need(h);
-    rect(M, y, CW, h, i % 2 ? WHITE : TINT);
+    rect(M, y + h - 0.6, CW, 0.6, RULE);
     l1.forEach((l, k) => text(l, M + 8, y + 4.5 + k * (size + 0.5) * 1.3, size + 0.5, bold, INK));
     l2.forEach((l, k) => text(l, M + cols[0] + 6, y + 4.5 + k * size * 1.3, size, reg, INK));
     l3.forEach((l, k) => text(l, M + cols[0] + cols[1] + 6, y + 4.5 + k * size * 1.3, size, reg, INK));
@@ -404,9 +403,9 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const v = pr.value_example;
   if (v) {
     need(90);
-    rect(M, y, CW, 76, TINT);
+    rect(M, y, CW, 76, WHITE, MIDNIGHT);
     rect(M, y, 4, 76, GOLD);
-    text("What it could be worth: an example", M + 16, y + 9, 11, bold, MIDNIGHT);
+    text("What it could be worth: an example", M + 16, y + 9, 12, serif, MIDNIGHT);
     textIn(`Say your new website and adverts bring in ${v.enquiries} genuine enquiries a month. If 1 in ${v.one_in} turns into a ${v.job} worth ${money(v.job_value)}, that is ${v.jobs} jobs and ${money(v.total)} of work a month.`, M + 16, y + 26, CW - 32, 9.5, reg, INK, 1.35);
     textIn("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", M + 16, y + 56, CW - 32, 8, reg, SLATE);
     y += 88;
