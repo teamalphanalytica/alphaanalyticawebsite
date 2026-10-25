@@ -269,3 +269,5 @@ table.health td{vertical-align:top}
 .prospect-ads p{margin:4px 0}
 .prospect-ads-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
 .prospect-ads-row select{width:auto;min-height:36px;padding:0 10px}
+.review-cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media (max-width:700px){.review-cols{grid-template-columns:1fr}}

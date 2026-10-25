@@ -21,6 +21,8 @@ import { sendEmail } from "../lib/email.mjs";
 import { recordingOn, recordingNotice, retentionDays, handleRecordingCallback, startTranscript, summariseCall, fetchRecording } from "../lib/calls.mjs";
 import { overviewData, performanceData, feedData, callsData, callDetail } from "../lib/admin-data.mjs";
 import { ensureRich, adLinks, findProspects, polishTemplates, addProspect, buildProposition, nicheFor, pickNiche, PROSPECT_STATUSES, NICHES } from "../lib/prospects.mjs";
+import { runWeeklyReviews, reviewClient } from "../lib/ad-review.mjs";
+import { addDays, mondayOf } from "../lib/util.mjs";
 import { buildProposalPdf } from "../lib/pdf.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions } from "../lib/jobs.mjs";
 
@@ -348,7 +350,8 @@ async function admin(req, db, p, method) {
       googleManagerId: clean(Netlify.env.get("GOOGLE_MCC_ID"), 20),
       metaBusinessId: clean(Netlify.env.get("META_BUSINESS_ID"), 30),
     });
-    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv, checklist, welcome, selfServeReady: selfServeReady() });
+    const [adReview] = await db.sql`SELECT week_start, review, created_at FROM ad_reviews WHERE client_id = ${clientId} ORDER BY week_start DESC LIMIT 1`;
+    return json({ adReview: adReview || null, client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv, checklist, welcome, selfServeReady: selfServeReady() });
   }
 
   // POST /api/admin/clients/:id/test-enquiry  (proves the website-to-portal link works; never counted or billed)
@@ -640,6 +643,20 @@ async function admin(req, db, p, method) {
     const bytes = await buildProposalPdf({ name: row.name, website: row.website, audit: row.audit, phone: row.phone ? (row.phone.startsWith("+44") ? "0" + row.phone.slice(3) : row.phone) : "", proposition: ensureRich(row.proposition, row, row.audit, niche), contact: Netlify.env.get("PROPOSAL_CONTACT") || "" });
     const file = "proposal-" + (slugify(row.name) || "business") + ".pdf";
     return new Response(bytes, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${file}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+  }
+
+  // POST /api/admin/run/ad-review  (review every client's advertising for last week now)
+  if (p[0] === "run" && p[1] === "ad-review" && p.length === 2 && method === "POST") {
+    return json(await runWeeklyReviews(db, { force: true }));
+  }
+
+  // POST /api/admin/clients/:id/review  (review this client's advertising for last week now)
+  if (clientId && p[2] === "review" && p.length === 3 && method === "POST") {
+    const weekStart = addDays(mondayOf(new Date().toISOString().slice(0, 10)), -7);
+    const r = await reviewClient(db, clientId, weekStart);
+    if (r.skipped) return json({ ok: false, reason: r.skipped === "no ANTHROPIC_API_KEY" ? "Add the Anthropic key in Netlify first." : "There's nothing to review yet: no ad results or enquiries last week." });
+    if (r.error) return fail(502, "The review didn't finish: " + r.error);
+    return json({ ok: true });
   }
 
   // POST /api/admin/run/meta-conversions  (send waiting enquiries to Facebook now)

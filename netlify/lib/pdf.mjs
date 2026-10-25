@@ -292,30 +292,53 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     const l1 = wrap(b.title, bold, size + 0.5, cols[0] - 14);
     const l2 = wrap(b.why, reg, size, cols[1] - 14);
     const l3 = wrap(b.value, reg, size, cols[2] - 12);
-    const h = Math.max(l1.length, l2.length, l3.length) * size * 1.3 + 12;
+    const h = Math.max(l1.length, l2.length, l3.length) * size * 1.3 + 9;
     need(h);
     rect(M, y, CW, h, i % 2 ? WHITE : TINT);
-    l1.forEach((l, k) => text(l, M + 8, y + 6 + k * (size + 0.5) * 1.3, size + 0.5, bold, INK));
-    l2.forEach((l, k) => text(l, M + cols[0] + 6, y + 6 + k * size * 1.3, size, reg, INK));
-    l3.forEach((l, k) => text(l, M + cols[0] + cols[1] + 6, y + 6 + k * size * 1.3, size, reg, INK));
+    l1.forEach((l, k) => text(l, M + 8, y + 4.5 + k * (size + 0.5) * 1.3, size + 0.5, bold, INK));
+    l2.forEach((l, k) => text(l, M + cols[0] + 6, y + 4.5 + k * size * 1.3, size, reg, INK));
+    l3.forEach((l, k) => text(l, M + cols[0] + cols[1] + 6, y + 4.5 + k * size * 1.3, size, reg, INK));
     y += h;
   });
   y += 14;
 
   const v = pr.value_example;
   if (v) {
-    need(96);
-    rect(M, y, CW, 82, TINT);
-    rect(M, y, 4, 82, GOLD);
+    need(90);
+    rect(M, y, CW, 76, TINT);
+    rect(M, y, 4, 76, GOLD);
     text("What it could be worth: an example", M + 16, y + 9, 11, bold, MIDNIGHT);
     textIn(`Say your new website and adverts bring in ${v.enquiries} genuine enquiries a month. If 1 in ${v.one_in} turns into a ${v.job} worth ${money(v.job_value)}, that is ${v.jobs} jobs and ${money(v.total)} of work a month.`, M + 16, y + 26, CW - 32, 9.5, reg, INK, 1.35);
-    textIn("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", M + 16, y + 62, CW - 32, 8, reg, SLATE);
-    y += 96;
+    textIn("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", M + 16, y + 56, CW - 32, 8, reg, SLATE);
+    y += 88;
   }
 
-  heading("How you pay");
-  para(pr.offer, { gap: 6 });
-  heading("Next step");
+  heading("Why a small, AI-driven agency");
+  const why = [
+    ["You deal with the person running it", "We're a small Manchester business. You talk to the founder, not an account manager passing messages along."],
+    ["Your results are reviewed every week", "Every Monday our AI reads your last seven days: spend, enquiries, spam, which campaigns bring customers. It recommends changes and we check each one before it's made."],
+    ["Your adverts keep improving", "Adverts that are set up once and left tend to drift. Yours are looked at every week, so wasted spend is cut and what works gets more of the budget."],
+    ["You see what we see", "Your private login shows every enquiry and call, and where it came from."],
+  ];
+  const gw = (CW - 12) / 2;
+  for (let r = 0; r < 2; r++) {
+    const pair = why.slice(r * 2, r * 2 + 2);
+    const hs = pair.map(([t, d]) => wrap(t, bold, 9.5, gw - 22).length * 12 + wrap(d, reg, 8.5, gw - 22).length * 11.2 + 16);
+    const h = Math.max(...hs);
+    need(h + 8);
+    pair.forEach(([t, d], i) => {
+      const x = M + i * (gw + 12);
+      rect(x, y, gw, h, TINT);
+      rect(x, y, 3, h, GOLD);
+      const th = textIn(t, x + 12, y + 7, gw - 22, 9.5, bold, INK, 1.25);
+      textIn(d, x + 12, y + 9 + th, gw - 22, 8.5, reg, SLATE, 1.3);
+    });
+    y += h + 8;
+  }
+  y += 2;
+
+  heading("How you pay, and the next step");
+  para(pr.offer, { gap: 5 });
   para("Let's find ten minutes to talk it through. There's no obligation.", { gap: 4 });
   if (contact) para(contact, { font: bold, gap: 2 });
 

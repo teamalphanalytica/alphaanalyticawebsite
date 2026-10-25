@@ -100,3 +100,34 @@ test("clients and signed-out visitors cannot reach prospects", async () => {
   assert.equal((await call("/api/admin/prospects")).status, 401);
   globalThis.__user = { email: "admin@aa.test" };
 });
+
+test("the weekly AI review reads real numbers, saves once, and adds a note to the draft report", async () => {
+  const { runWeeklyReviews } = await import("../../netlify/lib/ad-review.mjs");
+  run(`TRUNCATE clients RESTART IDENTITY CASCADE`);
+  run(`INSERT INTO clients (name, slug, ingest_key) VALUES ('Joe Plumbing','joe','k'), ('Quiet Co','quiet','k2')`);
+  const day = "2026-10-20"; // a Tuesday; the review is for the week of Monday 19 Oct
+  run(`INSERT INTO ad_stats (client_id, day, platform, spend_pence, impressions, clicks, enquiries) VALUES (1,'${day}','google',5000,900,60,4)`);
+  run(`INSERT INTO leads (client_id, type, name, status, source, campaign, received_at) VALUES
+    (1,'form','a','qualified','Google','boilers','${day}T10:00:00Z'),(1,'form','b','spam','Facebook','lead form','${day}T11:00:00Z'),(1,'form','c','new','Facebook','lead form','${day}T12:00:00Z')`);
+  run(`INSERT INTO reports (client_id, week_start, title, body, published, auto) VALUES (1,'2026-10-19','Week','Numbers.',FALSE,TRUE)`);
+  const good = { headline: "H", working: ["w"], not_working: ["n"], changes: [{ action: "Pause X", why: "Because" }], test_next: "t", client_note: "We are tightening the form." };
+  let sent;
+  globalThis.Netlify = { env: { get: (k) => (k === "ANTHROPIC_API_KEY" ? "sk-test" : env[k]) } };
+  try {
+    const fetchImpl = async (u, o) => { sent = JSON.parse(o.body); return Response.json({ content: [{ type: "text", text: JSON.stringify(good) }] }); };
+    const r = await runWeeklyReviews(getDatabase(), { today: "2026-10-26", fetchImpl });
+    assert.equal(r.reviewed, 1);
+    assert.equal(r.skipped, 1); // Quiet Co has nothing to review
+    const facts = JSON.parse(sent.messages[0].content.split("numbers:\n")[1]);
+    assert.equal(facts.last_week.platforms[0].spend_pence, 5000);
+    assert.equal(facts.last_week.campaigns.find((c) => c.campaign === "lead form").spam, 1);
+    assert.equal(q(`SELECT count(*) AS n FROM ad_reviews`)[0].n, 1);
+    assert.match(q(`SELECT body FROM reports WHERE client_id=1`)[0].body, /Our weekly review\nWe are tightening the form\./);
+    const again = await runWeeklyReviews(getDatabase(), { today: "2026-10-26", fetchImpl });
+    assert.equal(again.reviewed, 0); // already done, not repeated
+    const forced = await (await call("/api/admin/clients/1/review", { method: "POST", body: {} })).json(); // different week (today), no data
+    assert.equal(forced.ok, false);
+    const detail = await (await call("/api/admin/clients/1")).json();
+    assert.equal(detail.adReview.review.headline, "H");
+  } finally { globalThis.Netlify = { env: { get: (k) => env[k] } }; }
+});

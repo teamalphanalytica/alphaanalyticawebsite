@@ -1034,14 +1034,29 @@ function checklistPanel() {
   </div>`;
 }
 
+function adReviewPanel(client, ar) {
+  const r = ar && ar.review;
+  const list = (items) => (items && items.length ? `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>` : "<p class=\"muted small\">Nothing to report.</p>");
+  return `<div class="panel"><h2>Weekly AI review of their advertising</h2>
+    <p class="muted small">Every Monday, Claude reads last week's numbers for this client and recommends what to change. Nothing is changed for you: you check each one, then make the change in Google or Facebook.</p>
+    ${r ? `<p><b>${esc(r.headline)}</b> <span class="muted small">Week of ${esc(String(ar.week_start).slice(0, 10))}</span></p>
+      <div class="review-cols"><div><h3 class="grouphead">Working</h3>${list(r.working)}</div><div><h3 class="grouphead">Not working</h3>${list(r.not_working)}</div></div>
+      <h3 class="grouphead">Changes to make</h3><ol>${r.changes.map((c) => `<li><b>${esc(c.action)}</b><br><span class="muted">${esc(c.why)}</span></li>`).join("")}</ol>
+      ${r.test_next ? `<h3 class="grouphead">Test next</h3><p>${esc(r.test_next)}</p>` : ""}`
+      : `<p class="muted">No review yet. It runs every Monday once the Anthropic key is added and there are results to look at.</p>`}
+    <p><button class="btn btn-ghost btn-small" data-action="client-review" data-id="${client.id}" type="button">Review last week now</button></p></div>`;
+}
+
 function viewAdminClient() {
-  const { client, users, steps, numbers, drafts, connections, conversions } = state.adminDetail;
+  const { client, users, steps, numbers, drafts, connections, conversions, adReview } = state.adminDetail;
   const hook = `${location.origin}/api/ingest?key=${client.ingest_key}`;
   return `<div class="pagehead"><div class="rowhead"><h1>${esc(client.name)}</h1>
       <span><button class="btn btn-ghost btn-small" data-action="admin-back" type="button">All clients</button>
       <button class="btn btn-primary btn-small" data-action="view-as" data-id="${client.id}" type="button">View as client</button></span></div></div>
 
     ${checklistPanel()}
+
+    ${adReviewPanel(client, adReview)}
 
     <div class="panel"><h2>Build progress</h2><ol class="steps">
       ${steps.map((st, i) => `<li class="step ${esc(st.status)}"><span class="dot" aria-hidden="true">${st.status === "done" ? "✓" : i + 1}</span>
@@ -1224,7 +1239,7 @@ async function loadCalls(append) {
 
 async function loadAdminClient(id) {
   const [detail, portal] = await Promise.all([api(`/admin/clients/${id}`), api(`/portal?client=${id}`)]);
-  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, conversions: detail.conversions, checklist: detail.checklist, welcome: detail.welcome, selfServeReady: detail.selfServeReady, steps: portal.steps };
+  state.adminDetail = { adReview: detail.adReview, client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, conversions: detail.conversions, checklist: detail.checklist, welcome: detail.welcome, selfServeReady: detail.selfServeReady, steps: portal.steps };
 }
 
 /* ---------- events ---------- */
@@ -1392,6 +1407,13 @@ app.addEventListener("click", (e) => {
     });
   }
 
+  if (a === "client-review") {
+    return attempt(async () => {
+      const r = await api(`/admin/clients/${el.dataset.id}/review`, { method: "POST", body: {} });
+      await loadAdminClient(Number(el.dataset.id));
+      flash(r.ok ? "ok" : "err", r.ok ? "Reviewed. The note for the client was added to their draft report." : r.reason);
+    });
+  }
   if (a === "prospect-toggle") {
     const id = String(el.dataset.id);
     if (state.prospectOpen.has(id)) state.prospectOpen.delete(id); else state.prospectOpen.add(id);

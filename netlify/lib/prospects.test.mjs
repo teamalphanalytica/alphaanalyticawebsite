@@ -97,7 +97,7 @@ test("the template proposal uses the audit and never invents a price", () => {
   assert.equal(pr.findings.length, 3);
   assert.match(pr.call.opener, /Smith Roofing/);
   assert.doesNotMatch(JSON.stringify(pr), /£\d/);
-  assert.equal(pr.call.objections.length, 3);
+  assert.equal(pr.call.objections.length, 4);
 });
 
 test("Claude is told to use only the facts and not to invent a price", () => {

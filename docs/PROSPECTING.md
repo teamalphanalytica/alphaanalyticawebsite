@@ -61,3 +61,12 @@ Rules: use only facts you saw; never invent statistics, rankings, competitors, r
 ```
 
 The in-portal version is better because it remembers who it has already found, keeps your call notes and follow-up dates, and builds the PDFs for you.
+
+## The weekly AI review (what the proposal promises)
+
+The proposal says every client's results are reviewed by AI every week and that a person checks each change. That is real:
+
+- Every Monday morning (after the weekly report drafts) Claude reads each client's last seven days against the week before: spend, clicks and enquiries by platform, and for each campaign the enquiries, spam, good enquiries and customers, plus calls.
+- It writes what is working, what isn't, two to four specific changes and one test for next week, and adds a plain-English note to the client's draft report.
+- It only recommends. Open the client in Admin to read it, then make the change in Google or Facebook yourself. "Review last week now" runs it on demand.
+- It needs `ANTHROPIC_API_KEY` and reviews at campaign level (the data we hold), not individual advert wording, so don't promise advert-by-advert reviews.

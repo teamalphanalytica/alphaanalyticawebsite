@@ -388,6 +388,7 @@ export function templateProposition(p, audit, niche) {
       objections: [
         { q: "We've got enough work.", a: "That's good to hear. Most firms we speak to want the choice of better jobs, not just more of them. Can I send over what I noticed anyway?" },
         { q: "We've been burnt by marketing firms.", a: "That's why we only charge per genuine enquiry. If there's no enquiry, there's no charge." },
+        { q: "Why you and not a big agency?", a: "We're a small Manchester business, so you deal with the founder directly. And every Monday our AI reviews your last week's results and recommends changes that we check and make, so your adverts keep improving instead of being set up once and left." },
         { q: "Send me something in the post/email.", a: "Of course. I'll send a one-page summary of what I saw on your site. What's the best email address?" },
       ],
     },
@@ -398,6 +399,7 @@ export function templateProposition(p, audit, niche) {
 export function propositionRequest(p, audit, niche) {
   const system = [
     "You write short, honest sales proposals for Alpha Analytica, a small Manchester marketing agency that builds websites and runs Google and Facebook ads for local businesses, charging per genuine enquiry (spam and wrong numbers are not charged).",
+    "About us, if you mention it: we are a small Manchester business, you deal with the founder, and every Monday our AI reviews each client's last week of results and recommends changes that a person checks and makes. Do not say the AI changes adverts by itself, and do not promise results, rankings or that we are \"always ahead of the competition\".",
     "Write in plain British English for a busy tradesperson or small-business owner. No jargon, no hype, no exclamation marks.",
     "Use ONLY the facts provided. Never invent statistics, rankings, competitor claims, revenue figures, reviews, guarantees or results. Never claim to have seen their ads, accounts or analytics. Describe website problems as things we noticed or could not find on the page, not as certainties about their business.",
     "For advertising, only say what the facts show. \"not checked\" means unknown: never claim they do or do not advertise. If an ad tag or pixel is on their website, say we saw it; never claim to have seen their actual ads unless checked by hand says running ads.",
