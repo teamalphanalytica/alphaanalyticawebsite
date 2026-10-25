@@ -4,6 +4,7 @@
 // It recommends only. A person checks each change and makes it in the ad account. Nothing is changed automatically.
 
 import { addDays, mondayOf, clean } from "./util.mjs";
+import { WRITING_RULES } from "./writing.mjs";
 
 /** Last week's numbers against the week before, for one client. Everything here is counted from our own records. */
 export async function reviewFacts(db, clientId, weekStart) {
@@ -44,6 +45,7 @@ export function reviewRequest(facts) {
     "Money is in pence in the data: show it as pounds. Work out cost per enquiry as spend divided by enquiries and say when there are too few enquiries (under about 5) for that to mean much.",
     "You recommend, a person decides. Every change must be something a person can do in the Google Ads or Meta Ads account, such as pausing a campaign, moving budget, adding negative keywords, changing wording, or testing a new advert. Never say you have changed anything.",
     "Plain British English, no jargon, no hype, no exclamation marks.",
+    WRITING_RULES,
     "Reply with ONE JSON object only, in exactly this shape:",
     '{"headline": string (one sentence on how the week went), "working": [string] (up to 3), "not_working": [string] (up to 3), "changes": [{"action": string, "why": string}] (2 to 4, most important first), "test_next": string (one specific test for next week), "client_note": string (2 or 3 sentences for the client to read: what we saw and what we are changing, no jargon)}',
   ].join("\n");

@@ -192,7 +192,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     para(`What a local customer sees when they search. Checked ${when}. Results vary a little by location and device.`, { size: 8.5, color: SLATE, gap: 6 });
   }
 
-  heading("What's holding you back");
+  heading("What we found");
   for (const f of pr.findings) {
     need(56);
     rect(M, y + 1, 3, 13, GOLD);
@@ -206,7 +206,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   y += 19;
   rect(M, y, CW, 1, RULE);
   y += 8;
-  y += textIn("A concept to show the layout and the thinking. Your photos, wording and branding replace the placeholders, and we agree the final design with you before anything goes live.", M, y, CW, 9, reg, SLATE) + 8;
+  y += textIn("A concept to show the layout. Your photos, wording and branding replace the placeholders, and we agree the final design with you before anything goes live.", M, y, CW, 9, reg, SLATE) + 8;
 
   const cn = pr.concept || {};
   const ph = phone || cn.phone || "";
@@ -296,7 +296,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const calls = [
     ["A call button that is always there", "In the header on a computer, and pinned to the bottom of the screen on a phone, so a customer can ring with one tap."],
     ["A quote form beside the first thing they read", "A short form with three questions, so asking for a quote takes seconds."],
-    ["Your credentials and reviews straight under the headline", "The things that make someone trust you are seen first, not buried."],
+    ["Your credentials and reviews straight under the headline", "Reviews and accreditations sit where a visitor looks first."],
     ["A clear page for each service", "Each service (and later each town) gets its own page, so Google has more to show for what people search."],
   ];
   let cy = PT + 2;
@@ -354,12 +354,12 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     y += 88;
   }
 
-  heading("Why choose us");
+  heading("About us");
   const why = [
-    ["You deal with the person running it", "We're a small Manchester business. You talk to the founder, not an account manager passing messages along."],
-    ["Your results are reviewed every week", "Every Monday our AI reads your last seven days: spend, enquiries, spam, which campaigns bring customers. It recommends changes and we check each one before it's made."],
-    ["Your adverts keep improving", "Adverts that are set up once and left tend to drift. Yours are looked at every week, so wasted spend is cut and what works gets more of the budget."],
-    ["You see what we see", "Your private login shows every enquiry and call, and where it came from."],
+    ["You deal with the founder", "We are a small Manchester business. You speak to the person running it, not an account manager."],
+    ["Results reviewed every week", "Every Monday our AI reads your last seven days of spend, enquiries, spam and campaign results. It recommends changes, and a person checks each one before it is made."],
+    ["Wasted spend gets cut", "Each week we look for adverts that cost money and brought no enquiries, and move that budget to the ones that did."],
+    ["A private login", "It shows every enquiry and call, and where each one came from."],
   ];
   const gw = (CW - 12) / 2;
   for (let r = 0; r < 2; r++) {
@@ -383,7 +383,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   [
     ["A ten-minute call", "We talk through this and what you'd want. No obligation."],
     ["We show you the design", "We agree your new website with you before anything goes live."],
-    ["Enquiries start arriving", "Every Monday we review your results, and you see every enquiry and call in your own login."],
+    ["Weekly reviews", "Every Monday we review your results. You see every enquiry and call in your own login."],
   ].forEach(([t, d], i) => {
     need(24);
     page.drawCircle({ x: M + 7, y: top(y + 6), size: 7, color: GOLD });

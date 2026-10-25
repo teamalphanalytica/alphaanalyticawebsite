@@ -6,6 +6,7 @@
 // Data from OpenStreetMap is © OpenStreetMap contributors, licensed ODbL.
 
 import { normaliseUkPhone, clean } from "./util.mjs";
+import { WRITING_RULES } from "./writing.mjs";
 
 const UA = "AlphaAnalyticaBot/1.0 (+https://alpha-analytica.netlify.app; looks at a business's public homepage once)";
 
@@ -426,7 +427,7 @@ export function templateProposition(p, audit, niche) {
   const adFinding = adsSeen && !tracked
     ? { title: "You advertise, but can't see what it brings in", detail: "We found adverts running for the business, but nothing on the website that records which ads lead to enquiries. Without that it's hard to know which ones are worth the money." }
     : p.ads_google === "no" && p.ads_meta === "no"
-      ? { title: "No Google or Facebook adverts that we could find", detail: "We checked Google's and Facebook's public ad libraries and found nothing running. Competitors who do advertise are being seen first by people searching nearby." }
+      ? { title: "No Google or Facebook adverts that we could find", detail: "We checked Google's and Facebook's public ad libraries and found nothing running. People searching nearby see the businesses that do advertise first." }
       : null;
   const running = adsSeen || tracked;
   const checked = (p.rankings || []).filter((r) => r.bucket && r.bucket !== "unknown");
@@ -445,14 +446,14 @@ export function templateProposition(p, audit, niche) {
     { title: "A website that works on every phone", why: "Many people look for a tradesperson on their phone, often in a hurry. If the site is awkward to use, they go to the next one.", value: "More visitors get in touch instead of leaving." },
     { title: "One tap to call, one clear quote button", why: "The quickest way from \"I need someone\" to talking to you is a call button that is always on screen.", value: "More visitors turn into calls and enquiries." },
     credentials
-      ? { title: "Your credentials and reviews up front", why: "People pick the business that looks trustworthy. Your registrations and reviews are what they look for first, so they should be impossible to miss.", value: "Customers arrive already reassured, so fewer choose on price alone." }
-      : { title: "Proof you can be trusted, up front", why: "People pick the business that looks trustworthy. Reviews, accreditations and photos of real work belong at the top of the page.", value: "Customers arrive already reassured, so fewer choose on price alone." },
+      ? { title: "Your credentials and reviews up front", why: "People pick the business that looks trustworthy. Your registrations and reviews are what they look for first, so they should be impossible to miss.", value: "Visitors can see why they should trust you before they decide." }
+      : { title: "Proof you can be trusted, up front", why: "People pick the business that looks trustworthy. Reviews, accreditations and photos of real work belong at the top of the page.", value: "Visitors can see why they should trust you before they decide." },
     { title: "A page for each service and town", why: "Google shows the pages that match what someone typed. A page for each service and town gives you more chances to be found.", value: "More local people find you without you paying for every click." },
     { title: "Every enquiry traced to its source", why: "Each advert gets its own phone number and form, so every call and message links back to the advert that caused it.", value: "You see which adverts bring work and stop paying for the rest." },
   ];
   const jobs = Math.round(20 * 0.25);
   const value_example = { enquiries: 20, one_in: 4, jobs, job: extra.job, job_value: extra.value, total: jobs * extra.value };
-  const lead = (findings[0] || {}).title || "a few things that may be costing you enquiries";
+  const lead = (findings[0] || {}).title || "Things that may be costing you enquiries";
   const short_version = {
     found: findings.length > 1 ? `${lead}, and ${findings.length - 1} other thing${findings.length > 2 ? "s" : ""} worth fixing.` : `${lead}.`,
     plan: "A new website that's easy to use on a phone, Google and Facebook adverts aimed at people near you, and a weekly review of your results.",
@@ -461,8 +462,8 @@ export function templateProposition(p, audit, niche) {
   return {
     concept, benefits, value_example, short_version,
     headline: `More of the right enquiries for ${p.name}`,
-    summary: `We took a look at ${p.website ? "your website" : "how customers find you online"} and found a few things that may be costing ${p.name} work. Here is what we noticed and what we would do about it.`,
-    findings: (findings.length ? findings : [{ title: "A good starting point", detail: "Your website covers the basics. The opportunity is bringing more of the right people to it." }])
+    summary: `We looked at ${p.website ? "your website" : "how customers find you online"} and found things that may be costing ${p.name} enquiries.`,
+    findings: (findings.length ? findings : [{ title: "Your website covers the basics", detail: "The main opportunity is getting more of the right people to it." }])
       .map((i) => ({ title: i.title, detail: i.detail })),
     plan: [
       p.website ? "Fix the points above on your website, so more visitors get in touch" : "Build you a simple, fast website that works on phones, with a tap-to-call button and an enquiry form",
@@ -480,9 +481,9 @@ export function templateProposition(p, audit, niche) {
         "Have you tried Google or Facebook adverts before? How did it go?",
       ],
       objections: [
-        { q: "We've got enough work.", a: "That's good to hear. Most firms we speak to want the choice of better jobs, not just more of them. Can I send over what I noticed anyway?" },
+        { q: "We've got enough work.", a: "Good to hear. I can send over what I noticed on your website anyway. There's no obligation." },
         { q: "We've been burnt by marketing firms.", a: "That's why we only charge per genuine enquiry. If there's no enquiry, there's no charge." },
-        { q: "Why you and not a big agency?", a: "We're a small Manchester business, so you deal with the founder directly. And every Monday our AI reviews your last week's results and recommends changes that we check and make, so your adverts keep improving instead of being set up once and left." },
+        { q: "Why you and not a big agency?", a: "We're a small Manchester business, so you deal with the founder directly. And every Monday our AI reviews your last week's results and recommends changes that we check and make, so your adverts get looked at every week instead of being set up once." },
         { q: "Send me something in the post/email.", a: "Of course. I'll send a one-page summary of what I saw on your site. What's the best email address?" },
       ],
     },
@@ -500,6 +501,7 @@ export function propositionRequest(p, audit, niche) {
     "For Google search results, only use google_search_results: say where they appear only for searches that were checked; never claim a position for one that was not.",
     "For advertising, only say what the facts show. \"not checked\" means unknown: never claim they do or do not advertise. If an ad tag or pixel is on their website, say we saw it; never claim to have seen their actual ads unless checked by hand says running ads.",
     "Do not state any price unless one is given in the facts. If none is given, say the price per enquiry is agreed on a short call.",
+    WRITING_RULES,
     "Reply with ONE JSON object and nothing else, in exactly this shape:",
     '{"headline": string (max 70 chars), "summary": string (2 sentences), "findings": [{"title": string, "detail": string}] (exactly 3, taken from the issues given), "plan": [string] (4 items), "offer": string (2 sentences), "call": {"opener": string (what to say in the first 15 seconds, naming the business), "why_now": string, "questions": [string] (3), "objections": [{"q": string, "a": string}] (3)}, "cover_note": string (3 sentences, to send with the PDF after a call), "short_version": {"found": string (one sentence: the main thing we found), "plan": string (one sentence: what we would do), "cost": string (one sentence on how they pay, no price unless one is given)}, "concept": {"tagline": string (max 70 chars, for a new website headline), "subline": string (max 100 chars), "services": [string] (4 short service names taken from their site headings), "trust": [string] (up to 4 credentials that appear in site_facts.accreditations or the year started; an empty list if none)}, "benefits": [{"title": string, "why": string (why it matters, 1-2 sentences), "value": string (what it means for them, no numbers or percentages)}] (exactly 5)}',
   ].join("\n");
