@@ -50,14 +50,14 @@ export async function buildProposalPdf({ name, website, proposition: pr, niche, 
       const when = date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
       const w = reg.widthOfTextAtSize(when, 10.5);
       page.drawText(when, { x: W - M - w, y: H - 82, size: 10.5, font: reg, color: rgb(0.8, 0.84, 0.92) });
-      y = H - 96 - 40;
+      y = H - 96 - 30;
     } else {
       page.drawRectangle({ x: 0, y: H - 14, width: W, height: 14, color: MIDNIGHT });
       y = H - 14 - 40;
     }
   };
   const need = (h) => { if (y - h < 70) header(false); };
-  const para = (text, { size = 11, font = reg, color = INK, indent = 0, gap = 5, lead = 1.4 } = {}) => {
+  const para = (text, { size = 10.5, font = reg, color = INK, indent = 0, gap = 4, lead = 1.35 } = {}) => {
     for (const line of wrap(text, font, size, CW - indent)) {
       need(size * lead);
       page.drawText(line, { x: M + indent, y, size, font, color });
@@ -66,24 +66,24 @@ export async function buildProposalPdf({ name, website, proposition: pr, niche, 
     y -= gap;
   };
   const heading = (text) => {
-    need(50);
-    y -= 8;
+    need(90);
+    y -= 4;
     page.drawText(pdfSafe(text), { x: M, y, size: 13, font: bold, color: MIDNIGHT });
     y -= 6;
     page.drawRectangle({ x: M, y, width: CW, height: 1, color: RULE });
-    y -= 18;
+    y -= 15;
   };
 
   header(true);
   para(pr.headline, { size: 20, font: bold, color: MIDNIGHT, gap: 8, lead: 1.25 });
-  para(pr.summary, { size: 11.5, color: SLATE, gap: 10 });
+  para(pr.summary, { size: 11, color: SLATE, gap: 6 });
 
   heading("What we noticed");
   for (const f of pr.findings) {
-    need(60);
+    need(55);
     page.drawRectangle({ x: M, y: y - 3, width: 3, height: 13, color: GOLD });
     para(f.title, { font: bold, indent: 12, gap: 1 });
-    para(f.detail, { indent: 12, color: SLATE, gap: 9 });
+    para(f.detail, { indent: 12, color: SLATE, gap: 7 });
   }
 
   heading("What we would do");
