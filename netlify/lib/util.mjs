@@ -563,6 +563,11 @@ export function launchChecklist(c) {
   items.push(item("price", "Price per enquiry set", c.priceSet ? "done" : "todo",
     "Set the price per enquiry so billing is right."));
 
+  if (c.stripeOn) {
+    items.push(item("payment", "Payment method saved", c.paymentReady ? "done" : "waiting",
+      "Ask them to open the Billing tab and press 'Set up payment'. Until then their invoices are sent with a pay-online link."));
+  }
+
   const required = items.filter((i) => i.key !== "conversions");
   const done = items.filter((i) => i.state === "done").length;
   return {
@@ -595,4 +600,74 @@ export function clientWelcomeMessage({ businessName, portalUrl, googleManagerId,
   }
   lines.push(``, `5. Your phone number`, `   Tell us the number you'd like enquiry calls forwarded to. We'll give your website and ads a tracking number so every call is counted.`, ``, `Reply to this message if you get stuck on any step. We'll help.`, ``, `Thanks,`, `Alpha Analytica`);
   return lines.join("\n");
+}
+
+/* ---------- Stripe billing ---------- */
+
+/** Stripe wants nested form fields like items[0][price]=1. Turns plain objects and arrays into that. */
+export function stripeForm(obj) {
+  const out = new URLSearchParams();
+  const walk = (value, key) => {
+    if (value === undefined || value === null) return;
+    if (Array.isArray(value)) value.forEach((v, i) => walk(v, `${key}[${i}]`));
+    else if (typeof value === "object") Object.entries(value).forEach(([k, v]) => walk(v, key ? `${key}[${k}]` : k));
+    else out.append(key, String(value));
+  };
+  walk(obj, "");
+  return out;
+}
+
+/**
+ * Check that a webhook really came from Stripe: header "t=...,v1=..." signs `${t}.${body}` with the
+ * webhook secret. Rejects old timestamps so a captured request can't be replayed later.
+ */
+export function verifyStripeSignature({ payload, header, secret, nowSeconds = Math.floor(Date.now() / 1000), toleranceSeconds = 300 }) {
+  if (!payload || !header || !secret) return false;
+  const parts = Object.fromEntries(String(header).split(",").map((p) => p.split("=").map((s) => s.trim())).filter((p) => p.length === 2));
+  const t = Number(parts.t);
+  if (!Number.isInteger(t) || Math.abs(nowSeconds - t) > toleranceSeconds) return false;
+  const expected = createHmac("sha256", secret).update(`${t}.${payload}`).digest("hex");
+  // Stripe can send several v1 values while a secret is being rotated
+  return String(header).split(",").map((p) => p.trim()).filter((p) => p.startsWith("v1=")).some((p) => safeEqual(p.slice(3), expected));
+}
+
+/** The month being billed on a given day: always the previous month, and only from `billingDay` onwards. */
+export function billingPeriod(todayIso, billingDay = 8) {
+  const [y, m, d] = todayIso.slice(0, 10).split("-").map(Number);
+  const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+  return { period: prev, due: d >= billingDay };
+}
+
+/** Can a client still dispute this enquiry? Only within `days` of it arriving, and only once. */
+export function disputeAllowed(lead, now = new Date(), days = 7) {
+  if (!lead || lead.dispute_state) return false;
+  if (lead.status === "spam") return false;
+  const age = now.getTime() - new Date(lead.received_at).getTime();
+  return age >= 0 && age <= days * 86400000;
+}
+
+export const DISPUTE_REASONS = {
+  spam: "Spam or fake",
+  wrong_number: "Wrong number or not for us",
+  not_enquiry: "Not a genuine enquiry",
+  duplicate: "Duplicate of another enquiry",
+};
+
+/** "October 2026" from "2026-10" */
+export function monthLabel(period) {
+  const [y, m] = period.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * What to do for one client's month. Pure, so every edge case is testable.
+ * Returns { action: "invoice" | "skip" | "hold", reason, quantity, unit_pence, total_pence }.
+ */
+export function planInvoice({ billable, price, openDisputes, windowOpen }) {
+  if (openDisputes > 0) return { action: "hold", reason: `${openDisputes} dispute${openDisputes === 1 ? "" : "s"} still to review` };
+  if (windowOpen) return { action: "hold", reason: "The dispute window for the last enquiries is still open" };
+  if (price == null) return { action: "hold", reason: "No price per enquiry set" };
+  if (billable <= 0) return { action: "skip", reason: "No billable enquiries" };
+  if (price <= 0) return { action: "skip", reason: "Price per enquiry is £0" };
+  return { action: "invoice", quantity: billable, unit_pence: price, total_pence: billable * price };
 }

@@ -83,7 +83,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--ink);box
 .msg.ok{background:var(--green-bg);color:var(--green)}
 
 /* tables */
-.tablewrap{overflow-x:auto}
+.tablewrap{overflow-x:auto;position:relative}
 table{width:100%;border-collapse:collapse;font-size:.95rem}
 th{text-align:left;font-weight:600;color:var(--slate);padding:10px 12px 10px 0;border-bottom:2px solid var(--ink);white-space:nowrap}
 td{padding:12px 12px 12px 0;border-bottom:1px solid var(--rule);vertical-align:top}

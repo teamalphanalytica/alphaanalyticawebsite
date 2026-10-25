@@ -330,3 +330,55 @@ test("clientWelcomeMessage includes the agency ids and the portal link", () => {
   assert.match(m, /1556086649616024/);
   assert.match(m, /https:\/\/p\.example/);
 });
+
+/* ---------- billing ---------- */
+import { createHmac } from "node:crypto";
+import { stripeForm, verifyStripeSignature, billingPeriod, disputeAllowed, planInvoice, monthLabel } from "./util.mjs";
+
+test("stripeForm nests objects and arrays the way Stripe expects", () => {
+  const f = stripeForm({ mode: "setup", payment_method_types: ["card", "bacs_debit"], metadata: { client_id: 3 }, skip: undefined, none: null });
+  assert.equal(f.toString(), "mode=setup&payment_method_types%5B0%5D=card&payment_method_types%5B1%5D=bacs_debit&metadata%5Bclient_id%5D=3");
+});
+
+const sign = (body, secret, t) => `t=${t},v1=${createHmac("sha256", secret).update(`${t}.${body}`).digest("hex")}`;
+
+test("verifyStripeSignature accepts a genuine, fresh webhook", () => {
+  const body = '{"id":"evt_1"}'; const now = 1_800_000_000;
+  assert.equal(verifyStripeSignature({ payload: body, header: sign(body, "whsec_x", now), secret: "whsec_x", nowSeconds: now + 10 }), true);
+});
+
+test("verifyStripeSignature rejects tampering, wrong secrets, old timestamps and missing parts", () => {
+  const body = '{"id":"evt_1"}'; const now = 1_800_000_000; const h = sign(body, "whsec_x", now);
+  assert.equal(verifyStripeSignature({ payload: body + " ", header: h, secret: "whsec_x", nowSeconds: now }), false);
+  assert.equal(verifyStripeSignature({ payload: body, header: h, secret: "whsec_other", nowSeconds: now }), false);
+  assert.equal(verifyStripeSignature({ payload: body, header: h, secret: "whsec_x", nowSeconds: now + 10_000 }), false);
+  assert.equal(verifyStripeSignature({ payload: body, header: null, secret: "whsec_x", nowSeconds: now }), false);
+  assert.equal(verifyStripeSignature({ payload: body, header: h, secret: "", nowSeconds: now }), false);
+  assert.equal(verifyStripeSignature({ payload: body, header: "garbage", secret: "whsec_x", nowSeconds: now }), false);
+});
+
+test("billingPeriod always bills the previous month, only from the billing day", () => {
+  assert.deepEqual(billingPeriod("2026-11-08"), { period: "2026-10", due: true });
+  assert.deepEqual(billingPeriod("2026-11-07"), { period: "2026-10", due: false });
+  assert.deepEqual(billingPeriod("2027-01-15"), { period: "2026-12", due: true });
+});
+
+test("disputeAllowed: within the window, once, never for spam", () => {
+  const now = new Date("2026-10-20T12:00:00Z");
+  assert.equal(disputeAllowed({ received_at: "2026-10-18T12:00:00Z", status: "new", dispute_state: null }, now, 7), true);
+  assert.equal(disputeAllowed({ received_at: "2026-10-10T12:00:00Z", status: "new", dispute_state: null }, now, 7), false);
+  assert.equal(disputeAllowed({ received_at: "2026-10-18T12:00:00Z", status: "new", dispute_state: "open" }, now, 7), false);
+  assert.equal(disputeAllowed({ received_at: "2026-10-18T12:00:00Z", status: "spam", dispute_state: null }, now, 7), false);
+  assert.equal(disputeAllowed({ received_at: "2026-10-25T12:00:00Z", status: "new", dispute_state: null }, now, 7), false);
+});
+
+test("planInvoice covers every case", () => {
+  assert.equal(planInvoice({ billable: 4, price: 2500, openDisputes: 0, windowOpen: false }).total_pence, 10000);
+  assert.equal(planInvoice({ billable: 4, price: 2500, openDisputes: 1, windowOpen: false }).action, "hold");
+  assert.equal(planInvoice({ billable: 4, price: 2500, openDisputes: 0, windowOpen: true }).action, "hold");
+  assert.equal(planInvoice({ billable: 4, price: null, openDisputes: 0, windowOpen: false }).action, "hold");
+  assert.equal(planInvoice({ billable: 0, price: 2500, openDisputes: 0, windowOpen: false }).action, "skip");
+  assert.equal(planInvoice({ billable: 3, price: 0, openDisputes: 0, windowOpen: false }).action, "skip");
+});
+
+test("monthLabel reads naturally", () => assert.equal(monthLabel("2026-10"), "October 2026"));

@@ -17,6 +17,8 @@ const state = {
   adminClients: null,
   attention: null,
   billing: null, // { month, rows }
+  invoices: null, // admin: invoices needing attention
+  disputes: null, // admin: open enquiry disputes
   billingMonth: new Date().toISOString().slice(0, 7),
   adminDetail: null, // { client, users, steps }
   newClient: { values: {}, errors: {} }, // the add-client form: what was typed, and what to fix
@@ -153,6 +155,7 @@ const TABS = [
   ["calls", "Calls"],
   ["ads", "Ads"],
   ["reports", "Reports"],
+  ["billing", "Billing"],
 ];
 
 function screenPortal() {
@@ -166,7 +169,7 @@ function screenPortal() {
     body = `<div class="panel"><h2>Your login isn't linked to a business yet</h2>
       <p class="muted">We'll connect it shortly. If you think this is a mistake, get in touch with Alpha Analytica.</p></div>`;
   } else {
-    body = { overview: viewOverview, website: viewWebsite, leads: viewLeads, calls: viewCalls, ads: viewAds, reports: viewReports }[state.tab]();
+    body = { overview: viewOverview, website: viewWebsite, leads: viewLeads, calls: viewCalls, ads: viewAds, reports: viewReports, billing: viewBilling }[state.tab]();
   }
 
   return `<header class="bar"><div class="bar-in">
@@ -243,24 +246,68 @@ function viewWebsite() {
 
 const STATUS_LABEL = { new: "New", qualified: "Good enquiry", customer: "Became a customer", spam: "Not a real enquiry" };
 
+function disputeCell(l, b) {
+  if (l.dispute_state === "open") return `<span class="chip doing">Dispute under review</span>`;
+  if (l.dispute_state === "accepted") return `<span class="chip done">Dispute accepted, not billed</span>`;
+  if (l.dispute_state === "rejected") return `<span class="chip">Dispute declined</span>`;
+  if (l.status === "spam") return `<span class="muted small">Not billed</span>`;
+  if (!l.can_dispute) return "";
+  return `<label class="sr-only" for="dp${l.id}">Dispute this enquiry</label>
+    <select id="dp${l.id}" class="lead-select" data-action="dispute" data-id="${l.id}">
+      <option value="">Dispute…</option>
+      ${Object.entries(b.reasons || {}).map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("")}
+    </select>`;
+}
+
 function viewLeads() {
   const d = state.data;
+  const b = d.billing || {};
+  const outcomes = Object.entries(STATUS_LABEL).filter(([v]) => v !== "spam");
   const rows = d.leads.map((l) => `<tr>
       <td>${esc(fmtDate(l.received_at))}</td>
       <td><b>${esc(l.name || "No name")}</b><br><span class="muted small">${esc([l.phone, l.email].filter(Boolean).join(" · "))}</span></td>
       <td><div class="lead-msg">${esc(l.message || "")}</div></td>
       <td>${esc(l.source || "Website")}${l.type === "call" ? " (call)" : ""}</td>
-      <td><label class="sr-only" for="ls${l.id}">Status</label>
+      <td>${l.status === "spam" ? `<span class="chip spam">Not a real enquiry</span>` : `<label class="sr-only" for="ls${l.id}">Status</label>
         <select id="ls${l.id}" class="lead-select" data-action="lead-status" data-id="${l.id}">
-          ${Object.entries(STATUS_LABEL).map(([v, t]) => `<option value="${v}" ${l.status === v ? "selected" : ""}>${t}</option>`).join("")}
-        </select></td>
+          ${outcomes.map(([v, t]) => `<option value="${v}" ${l.status === v ? "selected" : ""}>${t}</option>`).join("")}
+        </select>`}</td>
+      <td>${disputeCell(l, b)}</td>
     </tr>`).join("");
   return `<div class="pagehead"><h1>Enquiries</h1>
-      <p>Every enquiry from your website, newest first. Tell us which ones were good and which became customers. It helps us send you better ones.</p></div>
+      <p>Every enquiry from your website, newest first. Tell us which ones were good and which became customers. It helps us send you better ones.${b.disputeDays ? ` If one wasn't genuine, dispute it within ${b.disputeDays} days and we'll review it before you're billed.` : ""}</p></div>
     <div class="panel">
       ${d.leads.length
-        ? `<div class="tablewrap"><table><thead><tr><th>Date</th><th>Who</th><th>Message</th><th>Came from</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        ? `<div class="tablewrap"><table><thead><tr><th>Date</th><th>Who</th><th>Message</th><th>Came from</th><th>Outcome</th><th>Not genuine?</th></tr></thead><tbody>${rows}</tbody></table></div>`
         : `<p class="muted">No enquiries yet. They'll appear here the moment someone gets in touch.</p>`}
+    </div>`;
+}
+
+const INVOICE_CHIP = { open: ["doing", "Due"], paid: ["done", "Paid"], failed: ["spam", "Payment failed"], void: ["", "Cancelled"], draft: ["", "Draft"] };
+const payHref = (u) => { const h = safeHref(u); return h && /^https:\/\/[a-z0-9.-]*stripe\.com\//i.test(h) ? h : null; };
+
+function viewBilling() {
+  const b = state.data.billing || {};
+  const rows = (b.invoices || []).map((i) => {
+    const [cls, label] = INVOICE_CHIP[i.status] || ["", i.status];
+    const href = payHref(i.hosted_url);
+    return `<tr><td>${esc(i.period)}</td><td class="num">${i.quantity} × ${money(i.unit_pence)}</td><td class="num">${money(i.total_pence)}</td>
+      <td><span class="chip ${cls}">${esc(label)}</span></td>
+      <td>${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${i.status === "open" || i.status === "failed" ? "View and pay" : "View"}</a>` : ""}</td></tr>`;
+  }).join("");
+  return `<div class="pagehead"><h1>Billing</h1><p>You only pay for genuine enquiries. We invoice once a month for the month before.</p></div>
+    <div class="panel"><h2>Payment method</h2>
+      ${!b.stripeOn ? `<p class="muted">Online payment is being set up. We'll let you know when you can add your details.</p>`
+        : b.paymentReady
+          ? `<p><span class="chip done">Saved</span> We'll collect each month's invoice automatically. You'll get an email each time.</p>
+             <p><button class="btn btn-ghost btn-small" data-action="payment-setup" type="button">Change payment method</button></p>`
+          : `<p><span class="chip doing">Needed</span> Add a card or UK Direct Debit once and invoices are paid automatically.</p>
+             <p><button class="btn btn-primary" data-action="payment-setup" type="button">Set up payment</button></p>`}
+      <p class="muted small">Payments are handled by Stripe. We never see or store your card or bank details.</p>
+    </div>
+    <div class="panel"><h2>Invoices</h2>
+      ${rows ? `<div class="tablewrap"><table><thead><tr><th>Month</th><th class="num">Enquiries</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="muted">No invoices yet. Your first one arrives after your first full month.</p>`}
     </div>`;
 }
 
@@ -485,6 +532,34 @@ function billingPanel() {
   </div>`;
 }
 
+function invoicesPanel() {
+  const inv = state.invoices;
+  const dis = state.disputes;
+  if (!inv) return `<div class="panel"><h2>Invoices and disputes</h2><p class="muted">Loading…</p></div>`;
+  const chip = { draft: ["doing", "Draft: needs approval"], open: ["doing", "Sent, awaiting payment"], failed: ["spam", "Payment failed"] };
+  return `<div class="panel"><h2>Invoices</h2>
+    ${!inv.stripeOn ? `<p class="muted">Stripe isn't connected yet. Add <b>STRIPE_SECRET_KEY</b> and <b>STRIPE_WEBHOOK_SECRET</b> in Netlify to switch on automatic billing (see docs/SETUP.md).</p>`
+      : `<p class="muted small">Mode: <b>${inv.mode === "auto" ? "fully automatic" : "you approve each invoice before it's sent"}</b>. Clients have ${inv.disputeDays} days to dispute an enquiry, then invoices are created on the 8th for the month before.</p>`}
+    ${inv.invoices.length ? `<div class="tablewrap"><table><thead><tr><th>Client</th><th>Month</th><th class="num">Enquiries</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>
+      ${inv.invoices.map((i) => { const [c, t] = chip[i.status] || ["", i.status]; return `<tr><td><b>${esc(i.client)}</b></td><td>${esc(i.period)}</td><td class="num">${i.quantity} × ${money(i.unit_pence)}</td><td class="num">${money(i.total_pence)}</td>
+        <td><span class="chip ${c}">${esc(t)}</span></td>
+        <td>${i.status === "draft" ? `<button class="btn btn-primary btn-small" data-action="invoice-approve" data-id="${i.id}" type="button">Approve and send</button>
+          <button class="btn btn-ghost btn-small" data-action="invoice-discard" data-id="${i.id}" type="button">Discard</button>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<p class="muted">Nothing waiting. Paid invoices are in each client's Billing tab.</p>`}
+    <p class="mt"><button class="btn btn-ghost btn-small" data-action="run-job" data-job="billing" type="button">Create last month's invoices now</button></p>
+  </div>
+  <div class="panel"><h2>Enquiry disputes</h2>
+    <p class="muted small">Clients flag enquiries that weren't genuine. Accepting one removes it from their bill. A client's invoice waits until all their disputes are decided.</p>
+    ${dis && dis.disputes.length ? `<div class="tablewrap"><table><thead><tr><th>Client</th><th>Enquiry</th><th>Reason</th><th></th></tr></thead><tbody>
+      ${dis.disputes.map((d) => `<tr><td><b>${esc(d.client)}</b></td>
+        <td>${esc(fmtDate(d.received_at))} · ${esc(d.type)}<br><span class="muted small">${esc([d.name, d.phone, d.email].filter(Boolean).join(" · "))}</span><div class="lead-msg">${esc(d.message || "")}</div></td>
+        <td>${esc((dis.reasons || {})[d.dispute_reason] || d.dispute_reason)}</td>
+        <td><button class="btn btn-primary btn-small" data-action="dispute-decide" data-decision="accept" data-id="${d.id}" type="button">Accept (don't bill)</button>
+          <button class="btn btn-ghost btn-small" data-action="dispute-decide" data-decision="reject" data-id="${d.id}" type="button">Reject (bill)</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">No disputes to review.</p>`}
+  </div>`;
+}
+
 function viewAdmin() {
   if (state.adminDetail) return viewAdminClient();
   const list = state.adminClients;
@@ -500,6 +575,7 @@ function viewAdmin() {
         <button class="btn btn-ghost btn-small" data-action="run-job" data-job="attention-email" type="button">Email me this list now</button></p>
     </div>
     ${billingPanel()}
+    ${invoicesPanel()}
     <div class="panel"><h2>Clients</h2>
       ${list === null ? `<p class="muted">Loading…</p>` : list.length
         ? `<div class="tablewrap"><table><thead><tr><th>Business</th><th>Sector</th><th class="num">Build</th><th class="num">Enquiries (30 days)</th><th></th></tr></thead><tbody>
@@ -719,10 +795,14 @@ async function loadAdminList() {
   state.adminClients = null;
   state.attention = null;
   state.billing = null;
-  const [list, att, bill] = await Promise.all([api("/admin/clients"), api("/admin/attention"), api(`/admin/billing?month=${encodeURIComponent(state.billingMonth)}`)]);
+  state.invoices = null;
+  state.disputes = null;
+  const [list, att, bill, inv, dis] = await Promise.all([api("/admin/clients"), api("/admin/attention"), api(`/admin/billing?month=${encodeURIComponent(state.billingMonth)}`), api("/admin/invoices"), api("/admin/disputes")]);
   state.adminClients = list.clients;
   state.attention = att.items;
   state.billing = bill;
+  state.invoices = inv;
+  state.disputes = dis;
 }
 
 async function loadAdminClient(id) {
@@ -766,6 +846,12 @@ app.addEventListener("click", (e) => {
         return flash(r.skipped ? "err" : "ok", r.skipped ? "No Facebook token has been added yet."
           : `Facebook: ${r.sent} sent, ${r.failed} failed, ${r.unusable} had nothing to match on. Enquiries newer than the review window wait until it passes.`);
       }
+      if (el.dataset.job === "billing") {
+        if (r.stripeOff) return flash("err", "Stripe isn't connected yet.");
+        const held = r.held.length ? ` Waiting: ${r.held.map((h) => `${h.client} (${h.reason})`).join("; ")}.` : "";
+        const failed = r.failed.length ? ` Problems: ${r.failed.map((f) => `${f.client} (${f.error})`).join("; ")}.` : "";
+        return flash(r.failed.length ? "err" : "ok", `${r.period}: ${r.drafts} draft${r.drafts === 1 ? "" : "s"}, ${r.created} sent, ${r.skipped} with nothing to bill.${held}${failed}`);
+      }
       if (el.dataset.job === "attention-email") {
         return flash(r.sent ? "ok" : "err", r.sent ? "Sent. Check your inbox." : `Not sent: ${r.reason || r.error || "email isn't set up yet"}.`);
       }
@@ -806,6 +892,38 @@ app.addEventListener("click", (e) => {
       await api(`/admin/numbers/${el.dataset.id}`, { method: "DELETE" });
       await loadAdminClient(state.adminDetail.client.id);
       flash("ok", "Number removed.");
+    });
+  }
+
+  if (a === "payment-setup") {
+    return attempt(async () => {
+      const r = await api("/portal/payment-setup", { method: "POST", body: {} });
+      // only ever go to Stripe's own checkout page
+      if (!/^https:\/\/checkout\.stripe\.com\//.test(r.url || "")) throw new Error("We couldn't open the payment page. Please try again.");
+      location.assign(r.url);
+    });
+  }
+
+  if (a === "invoice-approve") {
+    return attempt(async () => {
+      await api(`/admin/invoices/${el.dataset.id}/approve`, { method: "POST", body: {} });
+      await loadAdminList();
+      flash("ok", "Approved. Stripe is sending it and will collect payment.");
+    });
+  }
+  if (a === "invoice-discard") {
+    if (!confirm("Discard this draft invoice? Nothing is charged, and the month can be billed again.")) return;
+    return attempt(async () => {
+      await api(`/admin/invoices/${el.dataset.id}`, { method: "DELETE" });
+      await loadAdminList();
+      flash("ok", "Draft discarded.");
+    });
+  }
+  if (a === "dispute-decide") {
+    return attempt(async () => {
+      await api(`/admin/disputes/${el.dataset.id}`, { method: "POST", body: { decision: el.dataset.decision } });
+      await loadAdminList();
+      flash("ok", el.dataset.decision === "accept" ? "Accepted. That enquiry won't be billed." : "Rejected. It stays billable.");
     });
   }
 
@@ -861,6 +979,14 @@ app.addEventListener("change", (e) => {
       const lead = state.data.leads.find((l) => String(l.id) === id);
       if (lead) lead.status = el.value;
       flash("ok", "Saved.");
+    });
+  }
+  if (el.dataset.action === "dispute") {
+    if (!el.value) return;
+    attempt(async () => {
+      await api(`/portal/leads/${id}/dispute`, { method: "POST", body: { reason: el.value } });
+      await loadPortal();
+      flash("ok", "Thanks. We'll review it and you won't be billed for it unless we find it was genuine.");
     });
   }
   if (el.dataset.action === "step-status") {
@@ -1047,7 +1173,13 @@ async function boot() {
     state.screen = "login";
     return render();
   }
-  await attempt(enterPortal);
+  const pay = new URLSearchParams(location.search).get("payment");
+  await attempt(async () => {
+    await enterPortal();
+    if (pay === "done" && state.data) { state.tab = "billing"; flash("ok", "Thanks! Your payment details are saved. It can take a minute to show here."); }
+    else if (pay === "cancelled" && state.data) { state.tab = "billing"; flash("err", "Payment setup wasn't finished. You can try again any time."); }
+    if (pay) history.replaceState(null, "", location.pathname);
+  });
 }
 
 boot();

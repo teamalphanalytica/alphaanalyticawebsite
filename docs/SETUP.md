@@ -86,3 +86,17 @@ This was built and tested without access to live Twilio, Google Ads, Meta, or a 
 Admin > Add a client. Enter the business name, the owner's email and phone, and the price per enquiry. Ad account ids are optional and can be added later. Everything is checked before anything is created, the owner's login is linked automatically, and (once self-serve numbers are on) their tracking number is bought and routed straight away.
 
 The client page then shows a **Launch checklist** with the single next step, a **Send a test enquiry** button that proves the website link works without being billed, and a **Message to send the client** with your Google and Meta ids already filled in. Invite the owner's email once in Netlify Identity.
+
+## Automatic billing (Stripe)
+
+Everything is built and sits idle until you add the keys. Start in Stripe **test mode**.
+
+1. Create a Stripe account (stripe.com) and turn on **Bacs Direct Debit** under Settings > Payment methods.
+2. In Stripe, Developers > API keys, create a **restricted key** with write access to: Customers, Checkout Sessions, Invoices, Invoice Items, and read access to SetupIntents. Add it to Netlify as `STRIPE_SECRET_KEY`.
+3. In Stripe, Developers > Webhooks, add an endpoint `https://YOUR-SITE/api/stripe/webhook` with these events: `setup_intent.succeeded`, `invoice.finalized`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible`. Copy its signing secret into Netlify as `STRIPE_WEBHOOK_SECRET`.
+4. In Stripe, Settings > Billing > Subscriptions and emails, turn on **Email finalised invoices and credit notes**, **Send reminders for unpaid invoices**, and **Smart Retries** for failed payments. That is what makes chasing automatic.
+5. Optional Netlify variables: `BILLING_MODE` (`approve` by default; set `auto` once you trust it), `BILLING_DISPUTE_DAYS` (7), `BILLING_DAY` (8), and `STRIPE_TAX_RATE_ID` if you charge VAT.
+
+How it runs: each client adds a card or Direct Debit once in their Billing tab. They can dispute an enquiry within 7 days. From the 8th, a daily job invoices last month once per client. It waits for any open disputes, and never double-bills. In `approve` mode each invoice is a draft until you press **Approve and send** in Admin. Failed payments, drafts and disputes show on your Needs attention list.
+
+To test: set a price for a test client, have them save the Stripe test card 4242 4242 4242 4242, then press **Create last month's invoices now** in Admin.

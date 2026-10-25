@@ -2,6 +2,7 @@
 // Used by the scheduled functions and by the "Run now" buttons in Admin.
 
 import { addDays, mondayOf, parseMetaInsights, buildReport, clean, findAlerts, attentionEmail, reportReadyEmail, parseAdminEmails, metaLeadEvent, metaEventUsable, toInt } from "./util.mjs";
+import { stripeOn } from "./billing.mjs";
 import { sendEmail } from "./email.mjs";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -94,6 +95,22 @@ export async function attentionItems(db, today = new Date().toISOString().slice(
     FROM clients c ORDER BY c.name`;
   const items = [];
   for (const r of rows) for (const a of findAlerts(r, today)) items.push({ client_id: r.id, client: r.name, ...a });
+
+  // money: disputes to review, drafts to approve, failed payments, missing payment methods
+  const money = await db.sql`
+    SELECT c.id, c.name, c.payment_ready, c.created_at,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.client_id = c.id AND l.dispute_state = 'open') AS open_disputes,
+      (SELECT COUNT(*)::int FROM invoices i WHERE i.client_id = c.id AND i.status = 'draft') AS drafts,
+      (SELECT COUNT(*)::int FROM invoices i WHERE i.client_id = c.id AND i.status = 'failed') AS failed
+    FROM clients c ORDER BY c.name`;
+  for (const m of money) {
+    if (m.failed) items.push({ client_id: m.id, client: m.name, level: "bad", message: `A payment failed (${m.failed} invoice${m.failed === 1 ? "" : "s"}). Stripe is retrying; contact them if it stays unpaid.` });
+    if (m.open_disputes) items.push({ client_id: m.id, client: m.name, level: "check", message: `${m.open_disputes} enquiry dispute${m.open_disputes === 1 ? "" : "s"} to review. Their invoice waits until you decide.` });
+    if (m.drafts) items.push({ client_id: m.id, client: m.name, level: "check", message: `${m.drafts} invoice${m.drafts === 1 ? " is" : "s are"} waiting for your approval.` });
+    if (stripeOn() && !m.payment_ready && Date.now() - new Date(m.created_at).getTime() > 3 * 86400000) {
+      items.push({ client_id: m.id, client: m.name, level: "check", message: "They haven't saved a payment method yet." });
+    }
+  }
   return items;
 }
 

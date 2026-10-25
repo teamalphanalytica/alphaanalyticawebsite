@@ -14,8 +14,10 @@ import { getUser } from "@netlify/identity";
 import {
   LEAD_STATUSES, STEP_STATUSES, PLATFORMS, DEFAULT_STEPS, HANGUP_TWIML,
   clean, toInt, isEmail, isE164, isDay, safeUrl, slugify, parseLead, readBody, sameOrigin, parseAdminEmails,
-  safeEqual, normaliseUkPhone, monthRange, toCsv, googleConversionTime, connectionStates, cleanIntake, validateNewClient, launchChecklist, clientWelcomeMessage, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
+  safeEqual, normaliseUkPhone, monthRange, toCsv, googleConversionTime, connectionStates, cleanIntake, validateNewClient, launchChecklist, disputeAllowed, DISPUTE_REASONS, verifyStripeSignature, clientWelcomeMessage, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
 } from "../lib/util.mjs";
+import { stripeOn, billingMode, disputeDays, createPaymentSetup, runBilling, approveInvoice, discardInvoice, handleStripeEvent } from "../lib/billing.mjs";
+import { sendEmail } from "../lib/email.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions, conversionDelayHours } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
@@ -50,6 +52,12 @@ export default async (req) => {
       return await googleConversionsAck(req, db);
     }
 
+    // Stripe tells us about payments (signed by Stripe, so no login)
+    if (parts[0] === "stripe" && parts[1] === "webhook" && parts.length === 2) {
+      if (method !== "POST") return fail(405, "Use POST.");
+      return await stripeWebhook(req, db);
+    }
+
     // Twilio call webhooks (signed by Twilio, so no login)
     if (parts[0] === "twilio" && parts.length === 2 && method === "POST") {
       if (parts[1] === "voice") return await twilioVoice(req, db);
@@ -73,6 +81,13 @@ export default async (req) => {
     }
     if (parts[0] === "portal" && parts[1] === "phone" && parts.length === 2 && method === "POST") {
       return await setupPhone(req, db, me);
+    }
+
+    if (parts[0] === "portal" && parts[1] === "payment-setup" && parts.length === 2 && method === "POST") {
+      return await paymentSetup(db, me);
+    }
+    if (parts[0] === "portal" && parts[1] === "leads" && parts[3] === "dispute" && parts.length === 4 && method === "POST") {
+      return await disputeLead(req, db, me, toInt(parts[2], { min: 1 }));
     }
 
     if (parts[0] === "leads" && parts.length === 2 && method === "PATCH") {
@@ -125,8 +140,8 @@ async function portal(db, me, url) {
     SELECT id, position, title, detail, status, updated_at
     FROM build_steps WHERE client_id = ${clientId} ORDER BY position`;
   const leads = await db.sql`
-    SELECT id, received_at, type, name, email, phone, message, source, campaign, status, value_pence
-    FROM leads WHERE client_id = ${clientId} ORDER BY received_at DESC LIMIT 200`;
+    SELECT id, received_at, type, name, email, phone, message, source, campaign, status, value_pence, dispute_state, dispute_reason
+    FROM leads WHERE client_id = ${clientId} AND source IS DISTINCT FROM 'Test enquiry' ORDER BY received_at DESC LIMIT 200`;
   const stats = await db.sql`
     SELECT day, platform, spend_pence, impressions, clicks, enquiries
     FROM ad_stats WHERE client_id = ${clientId} AND day >= CURRENT_DATE - 120
@@ -143,13 +158,22 @@ async function portal(db, me, url) {
     FROM calls c LEFT JOIN leads l ON l.call_sid = c.call_sid
     WHERE c.client_id = ${clientId} ORDER BY c.started_at DESC LIMIT 200`;
 
+  const now = new Date();
+  const days = disputeDays();
+  for (const l of leads) l.can_dispute = disputeAllowed(l, now, days);
+  const invoices = await db.sql`
+    SELECT id, period, quantity, unit_pence, total_pence, status, hosted_url, paid_at
+    FROM invoices WHERE client_id = ${clientId} AND status NOT IN ('skipped', 'creating', 'draft') ORDER BY period DESC LIMIT 24`;
+  const [pay] = await db.sql`SELECT payment_ready FROM clients WHERE id = ${clientId}`;
+  const billing = { stripeOn: stripeOn(), paymentReady: !!pay?.payment_ready, invoices, disputeDays: days, reasons: DISPUTE_REASONS };
+
   const connections = connectionStates(client, new Date().toISOString().slice(0, 10));
   const { google_last_push, meta_last_sync, meta_last_error, ...publicClient } = client;
   const agency = {
     google_manager_id: clean(Netlify.env.get("GOOGLE_MCC_ID"), 20),
     meta_business_id: clean(Netlify.env.get("META_BUSINESS_ID"), 30),
   };
-  return json({ client: publicClient, steps, leads, stats, reports, numbers, calls, connections, agency });
+  return json({ client: publicClient, steps, leads, stats, reports, numbers, calls, connections, agency, billing });
 }
 
 async function updateLead(req, db, me, leadId) {
@@ -158,6 +182,8 @@ async function updateLead(req, db, me, leadId) {
   if (!parsed.value) return fail(400, "Bad request.");
   const status = clean(parsed.value.status, 20);
   if (!LEAD_STATUSES.includes(status)) return fail(400, "Unknown status.");
+  // Spam changes what we bill, so a client raises a dispute and an admin decides
+  if (status === "spam" && !me.isAdmin) return fail(403, "To say an enquiry wasn't genuine, use the Dispute option.");
   const value = toInt(parsed.value.value_pence);
 
   const [lead] = await db.sql`SELECT id, client_id FROM leads WHERE id = ${leadId}`;
@@ -268,7 +294,7 @@ async function admin(req, db, p, method) {
     const [client] = await db.sql`
       SELECT id, name, sector, website_url, preview_url, ingest_key,
              google_customer_id, meta_ad_account_id, call_min_seconds, intake, price_per_enquiry_pence, meta_pixel_id, google_conversion_name,
-             google_last_push, meta_last_sync, meta_last_error
+             google_last_push, meta_last_sync, meta_last_error, payment_ready
       FROM clients WHERE id = ${clientId}`;
     if (!client) return fail(404, "Business not found.");
     const users = await db.sql`SELECT email FROM client_users WHERE client_id = ${clientId} ORDER BY email`;
@@ -301,6 +327,7 @@ async function admin(req, db, p, method) {
       metaPixel: client.meta_pixel_id,
       googleConversionSent: conv.google_sent > 0, metaConversionSent: conv.meta_sent > 0,
       priceSet: client.price_per_enquiry_pence != null,
+      paymentReady: !!client.payment_ready, stripeOn: stripeOn(),
     });
     const welcome = clientWelcomeMessage({
       businessName: client.name,
@@ -455,6 +482,49 @@ async function admin(req, db, p, method) {
         "content-disposition": `attachment; filename="alpha-analytica-billing-${month}.csv"` } });
     }
     return json({ month, rows: out });
+  }
+
+  // GET /api/admin/invoices?month=YYYY-MM  (what's been billed, and what's waiting for approval)
+  if (p[0] === "invoices" && p.length === 1 && method === "GET") {
+    const month = new URL(req.url).searchParams.get("month");
+    const rows = month
+      ? await db.sql`SELECT i.id, i.period, i.quantity, i.unit_pence, i.total_pence, i.status, i.hosted_url, i.note, c.name AS client
+                     FROM invoices i JOIN clients c ON c.id = i.client_id WHERE i.period = ${month} AND i.status <> 'creating' ORDER BY c.name`
+      : await db.sql`SELECT i.id, i.period, i.quantity, i.unit_pence, i.total_pence, i.status, i.hosted_url, i.note, c.name AS client
+                     FROM invoices i JOIN clients c ON c.id = i.client_id WHERE i.status IN ('draft', 'failed', 'open') ORDER BY i.period DESC, c.name`;
+    return json({ invoices: rows, stripeOn: stripeOn(), mode: billingMode(), disputeDays: disputeDays() });
+  }
+  if (p[0] === "invoices" && p.length === 3 && p[2] === "approve" && method === "POST") {
+    const r = await approveInvoice(db, toInt(p[1], { min: 1 }));
+    return r.error ? fail(r.status, r.error) : json(r);
+  }
+  if (p[0] === "invoices" && p.length === 2 && method === "DELETE") {
+    const r = await discardInvoice(db, toInt(p[1], { min: 1 }));
+    return r.error ? fail(r.status, r.error) : json(r);
+  }
+  // POST /api/admin/run/billing  (invoice last month now; add {"period":"2026-09"} for another month)
+  if (p[0] === "run" && p[1] === "billing" && p.length === 2 && method === "POST") {
+    const { value } = await readBody(req);
+    return json(await runBilling(db, { force: true, period: clean(value?.period, 7) }));
+  }
+
+  // GET /api/admin/disputes  and  POST /api/admin/disputes/:leadId {decision: accept|reject}
+  if (p[0] === "disputes" && p.length === 1 && method === "GET") {
+    const rows = await db.sql`
+      SELECT l.id, l.received_at, l.disputed_at, l.type, l.name, l.phone, l.email, l.message, l.dispute_reason, c.name AS client, c.id AS client_id
+      FROM leads l JOIN clients c ON c.id = l.client_id WHERE l.dispute_state = 'open' ORDER BY l.disputed_at`;
+    return json({ disputes: rows, reasons: DISPUTE_REASONS });
+  }
+  if (p[0] === "disputes" && p.length === 2 && method === "POST") {
+    const { value } = await readBody(req);
+    const decision = clean(value?.decision, 10);
+    if (!["accept", "reject"].includes(decision)) return fail(400, "Choose accept or reject.");
+    const leadId = toInt(p[1], { min: 1 });
+    const done = decision === "accept"
+      ? await db.sql`UPDATE leads SET dispute_state = 'accepted', status = 'spam' WHERE id = ${leadId} AND dispute_state = 'open' RETURNING id`
+      : await db.sql`UPDATE leads SET dispute_state = 'rejected' WHERE id = ${leadId} AND dispute_state = 'open' RETURNING id`;
+    if (!done[0]) return fail(409, "That dispute has already been decided.");
+    return json({ ok: true });
   }
 
   // POST /api/admin/run/meta-conversions  (send waiting enquiries to Facebook now)
@@ -729,6 +799,54 @@ async function setupPhone(req, db, me) {
   return r.changed ? json({ ok: true, changed: true }) : json({ ok: true, number: r.number }, 201);
 }
 
+
+/* ---------- payments ---------- */
+
+async function paymentSetup(db, me) {
+  if (!me.client) return fail(403, "No business is linked to this login yet.");
+  if (!stripeOn()) return fail(503, "Online payment isn't switched on yet. We'll be in touch to set it up.");
+  try {
+    return json({ url: await createPaymentSetup(db, me.client) });
+  } catch (e) {
+    console.error("payment setup failed", e);
+    return fail(502, "We couldn't open the payment page. Please try again in a minute.");
+  }
+}
+
+async function disputeLead(req, db, me, leadId) {
+  if (!leadId) return fail(400, "Bad enquiry.");
+  const { value } = await readBody(req);
+  const reason = clean(value?.reason, 30);
+  if (!Object.hasOwn(DISPUTE_REASONS, reason)) return fail(400, "Pick a reason.");
+  const [lead] = await db.sql`SELECT id, client_id, received_at, status, dispute_state FROM leads WHERE id = ${leadId}`;
+  // same answer as "missing" for someone else's enquiry, so ids can't be probed
+  if (!lead || !(me.client && me.client.id === lead.client_id)) return fail(404, "Enquiry not found.");
+  if (!disputeAllowed(lead, new Date(), disputeDays())) return fail(409, `Enquiries can only be disputed within ${disputeDays()} days, and once.`);
+  const done = await db.sql`
+    UPDATE leads SET dispute_state = 'open', dispute_reason = ${reason}, disputed_at = NOW()
+    WHERE id = ${leadId} AND dispute_state IS NULL RETURNING id`;
+  if (!done[0]) return fail(409, "That enquiry has already been disputed.");
+  // best effort: a failed email must never undo the dispute
+  sendEmail({ to: parseAdminEmails(Netlify.env.get("ADMIN_EMAILS")), subject: `Dispute from ${me.client.name}`,
+    text: `${me.client.name} disputed an enquiry (${DISPUTE_REASONS[reason]}). Review it in the portal under Admin.` }).catch(() => {});
+  return json({ ok: true });
+}
+
+async function stripeWebhook(req, db) {
+  const secret = Netlify.env.get("STRIPE_WEBHOOK_SECRET");
+  const payload = await req.text();
+  if (payload.length > 1_000_000) return fail(413, "Too large.");
+  if (!verifyStripeSignature({ payload, header: req.headers.get("stripe-signature"), secret })) return fail(400, "Bad signature.");
+  let event;
+  try { event = JSON.parse(payload); } catch { return fail(400, "Bad request."); }
+  try {
+    await handleStripeEvent(db, event);
+  } catch (e) {
+    console.error("stripe event failed", event?.type, e);
+    return fail(500, "Try again."); // Stripe will retry
+  }
+  return json({ received: true });
+}
 
 /* ---------- a client tells us about their business, and their ad account ids ---------- */
 
