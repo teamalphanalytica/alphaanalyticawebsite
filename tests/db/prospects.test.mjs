@@ -70,6 +70,11 @@ test("admin can list, update, rewrite and download a proposal", async () => {
   row = q(`SELECT status, notes, follow_up_on::text AS f FROM prospects WHERE id=${id}`)[0];
   assert.deepEqual(row, { status: "replied", notes: "Spoke to Dave", f: "2026-11-02" });
   assert.equal((await call(`/api/admin/prospects/${id}`, { method: "PATCH", body: { status: "hacked" } })).status, 400);
+  assert.equal((await call(`/api/admin/prospects/${id}`, { method: "PATCH", body: { ads_google: "maybe" } })).status, 400);
+  await call(`/api/admin/prospects/${id}`, { method: "PATCH", body: { ads_google: "yes", ads_meta: "no" } });
+  assert.deepEqual(q(`SELECT ads_google, ads_meta, status FROM prospects WHERE id=${id}`)[0], { ads_google: "yes", ads_meta: "no", status: "replied" });
+  const again = await (await call("/api/admin/prospects")).json();
+  assert.match(again.prospects.find((x) => x.id === id).ad_links.google, /adstransparency\.google\.com/);
   assert.equal((await call(`/api/admin/prospects/${id}/proposition`, { method: "POST", body: {} })).status, 200);
   const pdf = await call(`/api/admin/prospects/${id}/pdf`);
   assert.equal(pdf.status, 200);

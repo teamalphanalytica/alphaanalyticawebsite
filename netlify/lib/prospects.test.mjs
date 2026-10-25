@@ -148,3 +148,35 @@ test("a long proposal flows onto a second page", async () => {
   const { PDFDocument } = await import("pdf-lib");
   assert.ok((await PDFDocument.load(bytes)).getPageCount() >= 2);
 });
+
+test("Google and Facebook tags and the business's Facebook page are told apart", async () => {
+  const { facebookPageOf, adLinks, adsSummary } = await import("./prospects.mjs");
+  const a = auditHtml(`<html><body><script async src="https://www.googletagmanager.com/gtag/js?id=AW-1234567890"></script>
+    <script>fbq('init','1')</script><a href="https://www.facebook.com/sharer/sharer.php?u=x">share</a>
+    <a href="https://www.facebook.com/SmithRoofingManchester/">f</a></body></html>`);
+  assert.equal(a.checks.googleAdsTag, true);
+  assert.equal(a.checks.metaPixel, true);
+  assert.equal(a.checks.facebookPage, "https://www.facebook.com/SmithRoofingManchester");
+  assert.equal(facebookPageOf('<a href="https://facebook.com/tr?id=1">'), null);
+  const none = auditHtml("<html><body>hi</body></html>");
+  assert.equal(none.checks.googleAdsTag, false);
+  assert.equal(none.checks.metaPixel, false);
+  const l = adLinks({ name: "Smith & Sons", website: "https://www.smith.co.uk" });
+  assert.match(l.google, /domain=smith\.co\.uk/);
+  assert.match(l.meta, /q=Smith%20%26%20Sons/);
+  assert.equal(adsSummary({ ads_google: "unknown", ads_meta: "yes" }, a).google_ads, "not checked");
+});
+
+test("the proposal only claims what was checked about advertising", () => {
+  const plain = auditHtml("<html><body>hi</body></html>");
+  const tagged = auditHtml("<html><body><script>fbq('init','1')</script></body></html>");
+  const text = (p, a) => JSON.stringify(templateProposition(p, a, NICHES[0]).findings);
+  assert.doesNotMatch(text({ name: "A", ads_google: "unknown", ads_meta: "unknown" }, plain), /adverts running|No Google or Facebook adverts|ad libraries/);
+  assert.match(text({ name: "A", ads_google: "no", ads_meta: "no" }, plain), /No Google or Facebook adverts/);
+  assert.doesNotMatch(text({ name: "A", ads_google: "no", ads_meta: "unknown" }, plain), /No Google or Facebook adverts/);
+  assert.match(text({ name: "A", ads_google: "yes", ads_meta: "unknown" }, plain), /can't see what it brings in/);
+  assert.doesNotMatch(text({ name: "A", ads_google: "yes", ads_meta: "unknown" }, tagged), /can't see what it brings in/);
+  const req = propositionRequest({ name: "A", ads_google: "yes" }, plain, NICHES[0]);
+  assert.match(req.user, /running ads \(checked by hand\)/);
+  assert.match(req.system, /never claim they do or do not advertise/);
+});

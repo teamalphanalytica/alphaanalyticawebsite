@@ -10,6 +10,13 @@ Admin, then **Prospects**. Every weekday at about 7am a scheduled job:
 
 Nothing is ever sent to a business automatically. You choose who to call.
 
+## Their advertising
+
+Google and Facebook don't allow automatic collection of other people's ads, so this is part automatic, part one click:
+
+- **Automatic:** the website check notes whether the homepage carries a Google Ads tag, a Facebook pixel or analytics, and finds the business's Facebook page if it links to one.
+- **One click:** each card has **Check Google ads** (Google Ads Transparency Centre) and **Check Facebook ads** (Meta Ad Library), already searched for that business. Look, set the dropdown to *Running ads* or *No ads found*, then press **Rewrite proposal**. The proposal uses only what you recorded; "Not checked" is never turned into a claim.
+
 ## Settings (Netlify, Site configuration, Environment variables), all optional
 
 | Name | What it does |

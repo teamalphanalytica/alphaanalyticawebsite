@@ -155,6 +155,15 @@ export async function fetchHomepage(website, { fetchImpl = fetch, timeoutMs = 60
   throw new Error("Too many redirects");
 }
 
+/** The business's own Facebook page, if the homepage links to it (not share buttons or trackers). */
+export function facebookPageOf(html) {
+  const skip = new Set(["sharer", "sharer.php", "share.php", "tr", "plugins", "dialog", "login", "policy", "policies", "legal", "help", "groups", "events", "watch", "marketplace", "pages", "profile.php", "people", "hashtag", "ads", "business"]);
+  for (const m of String(html).matchAll(/https?:\/\/(?:www\.|m\.)?facebook\.com\/([A-Za-z0-9._-]{3,80})(?:[/?#"'\s]|$)/g)) {
+    if (!skip.has(m[1].toLowerCase())) return "https://www.facebook.com/" + m[1];
+  }
+  return null;
+}
+
 const UK_PHONE = /(?:\+44\s?\(?0?\)?\s?|\(?0)\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}/;
 
 /**
@@ -176,8 +185,11 @@ export function auditHtml(html, { https = true, year = new Date().getFullYear() 
     callToAction: /(free quote|get a quote|request a quote|get in touch|call (us )?(now|today)|book (a|your|now)|free survey|enquire|contact us)/.test(text),
     reviews: /(testimonial|reviews?\b|trustpilot|checkatrade|google reviews|rated|5 star|five star)/.test(text),
     analytics: /(googletagmanager\.com|google-analytics\.com|gtag\(|\bga\(|plausible\.io|clarity\.ms)/.test(lower),
-    adTracking: /(aw-\d{6,}|googleadservices|fbq\(|connect\.facebook\.net|fbevents\.js)/.test(lower),
+    googleAdsTag: /(aw-\d{6,}|googleadservices\.com|googleads\.g\.doubleclick)/.test(lower),
+    metaPixel: /(fbq\(|connect\.facebook\.net\/[a-z_]+\/fbevents|fbevents\.js)/.test(lower),
+    facebookPage: facebookPageOf(h),
   };
+  checks.adTracking = checks.googleAdsTag || checks.metaPixel;
   const years = [...text.matchAll(/(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]\s*)?(20\d\d)/g)].map((m) => Number(m[1]));
   const newest = years.length ? Math.max(...years) : null;
   checks.copyrightYear = newest;
@@ -230,6 +242,28 @@ export async function auditProspect(p, opts = {}) {
   }
 }
 
+/** One-click searches of the public ad libraries (no scraping: you look, then record what you saw). */
+export function adLinks(p) {
+  const host = p.website ? hostOf(p.website) : null;
+  return {
+    google: host ? `https://adstransparency.google.com/?region=GB&domain=${encodeURIComponent(host)}` : "https://adstransparency.google.com/?region=GB",
+    meta: `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=GB&q=${encodeURIComponent(p.name)}&search_type=keyword_unordered`,
+  };
+}
+
+/** In plain words: what we know about their advertising. Only things we saw or were told. */
+export function adsSummary(p, audit) {
+  const c = audit?.checks || {};
+  const word = (v) => (v === "yes" ? "running ads (checked by hand)" : v === "no" ? "no ads found (checked by hand)" : "not checked");
+  return {
+    google_ads: word(p.ads_google),
+    facebook_ads: word(p.ads_meta),
+    google_ads_tag_on_website: !!c.googleAdsTag,
+    facebook_pixel_on_website: !!c.metaPixel,
+    has_facebook_page: !!c.facebookPage,
+  };
+}
+
 /* ---------- the proposal ---------- */
 
 const pitchPrice = () => clean(globalThis.Netlify?.env?.get?.("PITCH_PRICE_TEXT"), 200);
@@ -241,14 +275,24 @@ export function templateProposition(p, audit, niche) {
   const job = niche?.job || "new enquiries";
   const first = top[0];
   const price = pitchPrice();
+  const c = audit?.checks || {};
+  const tracked = !!(c.googleAdsTag || c.metaPixel);
+  const adsSeen = p.ads_google === "yes" || p.ads_meta === "yes";
+  const adFinding = adsSeen && !tracked
+    ? { title: "You advertise, but can't see what it brings in", detail: "We found adverts running for the business, but nothing on the website that records which ads lead to enquiries. Without that it's hard to know which ones are worth the money." }
+    : p.ads_google === "no" && p.ads_meta === "no"
+      ? { title: "No Google or Facebook adverts that we could find", detail: "We checked Google's and Facebook's public ad libraries and found nothing running. Competitors who do advertise are being seen first by people searching nearby." }
+      : null;
+  const running = adsSeen || tracked;
+  const findings = [...(adFinding ? [adFinding] : []), ...top].slice(0, 3);
   return {
     headline: `More of the right enquiries for ${p.name}`,
     summary: `We took a look at ${p.website ? "your website" : "how customers find you online"} and found a few things that may be costing ${p.name} work. Here is what we noticed and what we would do about it.`,
-    findings: (top.length ? top : [{ title: "A good starting point", detail: "Your website covers the basics. The opportunity is bringing more of the right people to it." }])
+    findings: (findings.length ? findings : [{ title: "A good starting point", detail: "Your website covers the basics. The opportunity is bringing more of the right people to it." }])
       .map((i) => ({ title: i.title, detail: i.detail })),
     plan: [
       p.website ? "Fix the points above on your website, so every visit has the best chance of turning into an enquiry" : "Build you a simple, fast website that works on phones, with a tap-to-call button and an enquiry form",
-      "Run Google and Facebook adverts aimed at people near you who are looking for your service",
+      running ? "Review the Google and Facebook adverts you already run, cut what isn't bringing enquiries and put the money into what is" : "Run Google and Facebook adverts aimed at people near you who are looking for your service",
       "Give every ad enquiry and call a tracking number, so each call or message is linked back to the advert that produced it",
       "Give you a private login showing every enquiry and call, and where it came from",
     ],
@@ -276,6 +320,7 @@ export function propositionRequest(p, audit, niche) {
     "You write short, honest sales proposals for Alpha Analytica, a small Manchester marketing agency that builds websites and runs Google and Facebook ads for local businesses, charging per genuine enquiry (spam and wrong numbers are not charged).",
     "Write in plain British English for a busy tradesperson or small-business owner. No jargon, no hype, no exclamation marks.",
     "Use ONLY the facts provided. Never invent statistics, rankings, competitor claims, revenue figures, reviews, guarantees or results. Never claim to have seen their ads, accounts or analytics. Describe website problems as things we noticed or could not find on the page, not as certainties about their business.",
+    "For advertising, only say what the facts show. \"not checked\" means unknown: never claim they do or do not advertise. If an ad tag or pixel is on their website, say we saw it; never claim to have seen their actual ads unless checked by hand says running ads.",
     "Do not state any price unless one is given in the facts. If none is given, say the price per enquiry is agreed on a short call.",
     "Reply with ONE JSON object and nothing else, in exactly this shape:",
     '{"headline": string (max 70 chars), "summary": string (2 sentences), "findings": [{"title": string, "detail": string}] (exactly 3, taken from the issues given), "plan": [string] (4 items), "offer": string (2 sentences), "call": {"opener": string (what to say in the first 15 seconds, naming the business), "why_now": string, "questions": [string] (3), "objections": [{"q": string, "a": string}] (3)}, "cover_note": string (3 sentences, to send with the PDF after a call)}',
@@ -287,6 +332,7 @@ export function propositionRequest(p, audit, niche) {
     website: p.website || "none found",
     audit_score_out_of_100: audit?.score,
     issues_we_observed: (audit?.issues || []).slice(0, 5).map((i) => ({ title: i.title, detail: i.detail })),
+    advertising: adsSummary(p, audit),
     price_wording: pitchPrice() || "none given",
   };
   return { system, user: "Facts about this prospect:\n" + JSON.stringify(facts, null, 2) };
@@ -424,7 +470,7 @@ const hash = (s) => {
 export async function polishTemplates(db, { fetchImpl = fetch, budgetMs = 15_000, limit = 8 } = {}) {
   if (!globalThis.Netlify?.env?.get?.("ANTHROPIC_API_KEY") || budgetMs < 4000) return { polished: 0 };
   const rows = await db.sql`
-    SELECT id, name, niche, website, audit FROM prospects
+    SELECT id, name, niche, website, audit, ads_google, ads_meta FROM prospects
     WHERE proposition_by = 'template' AND status IN ('new','to_call') AND found_at > NOW() - INTERVAL '14 days'
     ORDER BY found_at DESC LIMIT ${limit}`;
   let polished = 0;

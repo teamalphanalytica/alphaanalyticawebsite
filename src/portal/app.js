@@ -846,6 +846,25 @@ function scoreChip(score) {
   return `<span class="chip ${cls}" title="Lower means more we can help with">Website ${score}/100</span>`;
 }
 
+function adsBlock(pr) {
+  const c = (pr.audit && pr.audit.checks) || {};
+  const l = pr.ad_links || {};
+  const yn = (id, field, v) => `<label class="sr-only" for="${id}${pr.id}">${field === "ads_google" ? "Google" : "Facebook"} ads</label>
+    <select id="${id}${pr.id}" data-action="prospect-ads" data-field="${field}" data-id="${pr.id}">
+      <option value="unknown" ${v === "unknown" ? "selected" : ""}>Not checked</option>
+      <option value="yes" ${v === "yes" ? "selected" : ""}>Running ads</option>
+      <option value="no" ${v === "no" ? "selected" : ""}>No ads found</option></select>`;
+  const seen = [c.googleAdsTag && "Google Ads tag on site", c.metaPixel && "Facebook pixel on site", c.facebookPage && "Facebook page linked", c.analytics && "Analytics on site"].filter(Boolean);
+  const fb = c.facebookPage ? safeHref(c.facebookPage) : "";
+  return `<div class="prospect-ads"><b>Their advertising</b>
+    <p class="muted small">${seen.length ? esc(seen.join(" · ")) : (pr.audit && pr.audit.checks && pr.audit.checks.website === false ? "No website to check." : "No ad tags, pixel or analytics spotted on their site.")}${fb ? ` · <a href="${fb}" target="_blank" rel="noopener noreferrer">Facebook page</a>` : ""}</p>
+    <div class="prospect-ads-row">
+      ${safeHref(l.google) ? `<a class="btn btn-ghost btn-small" href="${safeHref(l.google)}" target="_blank" rel="noopener noreferrer">Check Google ads</a>` : ""}${yn("pg", "ads_google", pr.ads_google)}
+      ${safeHref(l.meta) ? `<a class="btn btn-ghost btn-small" href="${safeHref(l.meta)}" target="_blank" rel="noopener noreferrer">Check Facebook ads</a>` : ""}${yn("pm", "ads_meta", pr.ads_meta)}
+    </div>
+    <p class="muted small">Opens Google's and Facebook's public ad libraries for this business. Look, then tell us what you saw so the proposal uses it. Press "Rewrite proposal" afterwards.</p></div>`;
+}
+
 function prospectCard(pr) {
   const open = state.prospectOpen.has(String(pr.id));
   const issues = (pr.audit && pr.audit.issues ? pr.audit.issues : []).slice(0, 3);
@@ -862,6 +881,7 @@ function prospectCard(pr) {
     <p class="prospect-contact">${pr.phone ? `<a href="tel:${esc(pr.phone)}"><b>${esc(ukPhone(pr.phone))}</b></a>` : `<span class="muted">No phone number found</span>`}
       ${site ? ` · <a href="${site}" target="_blank" rel="noopener noreferrer">${esc(pr.website.replace(/^https?:\/\//, ""))}</a>` : ` · <span class="muted">no website found</span>`}</p>
     ${issues.length ? `<ul class="prospect-issues">${issues.map((i) => `<li><b>${esc(i.title)}</b> <span class="muted">${esc(i.detail)}</span></li>`).join("")}</ul>` : ""}
+    ${adsBlock(pr)}
     <div class="prospect-actions">
       <a class="btn btn-primary btn-small" href="/api/admin/prospects/${Number(pr.id)}/pdf" target="_blank" rel="noopener">Open proposal PDF</a>
       <button class="btn btn-ghost btn-small" data-action="prospect-toggle" data-id="${pr.id}" type="button" aria-expanded="${open}">${open ? "Hide" : "Show"} call script</button>
@@ -1437,6 +1457,13 @@ app.addEventListener("change", (e) => {
       await api(`/admin/prospects/${id}`, { method: "PATCH", body });
       state.prospects = await api("/admin/prospects");
       flash("ok", "Saved.");
+    });
+  }
+  if (el.dataset.action === "prospect-ads") {
+    attempt(async () => {
+      await api(`/admin/prospects/${id}`, { method: "PATCH", body: { [el.dataset.field]: el.value } });
+      state.prospects = await api("/admin/prospects");
+      flash("ok", "Saved. Press Rewrite proposal to use it.");
     });
   }
   if (el.dataset.action === "prospect-filter") {

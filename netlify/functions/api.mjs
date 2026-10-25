@@ -20,7 +20,7 @@ import { stripeOn, billingMode, disputeDays, createPaymentSetup, runBilling, app
 import { sendEmail } from "../lib/email.mjs";
 import { recordingOn, recordingNotice, retentionDays, handleRecordingCallback, startTranscript, summariseCall, fetchRecording } from "../lib/calls.mjs";
 import { overviewData, performanceData, feedData, callsData, callDetail } from "../lib/admin-data.mjs";
-import { findProspects, polishTemplates, addProspect, buildProposition, nicheFor, pickNiche, PROSPECT_STATUSES, NICHES } from "../lib/prospects.mjs";
+import { adLinks, findProspects, polishTemplates, addProspect, buildProposition, nicheFor, pickNiche, PROSPECT_STATUSES, NICHES } from "../lib/prospects.mjs";
 import { buildProposalPdf } from "../lib/pdf.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions } from "../lib/jobs.mjs";
 
@@ -580,8 +580,9 @@ async function admin(req, db, p, method) {
   // GET /api/admin/prospects  (today's batch and everything before it)
   if (p[0] === "prospects" && p.length === 1 && method === "GET") {
     const rows = await db.sql`
-      SELECT id, name, niche, address, phone, website, source, entity_type, status, notes, score, audit, proposition, proposition_by, batch_date, found_at, contacted_at, follow_up_on
+      SELECT id, name, niche, address, phone, website, source, entity_type, ads_google, ads_meta, status, notes, score, audit, proposition, proposition_by, batch_date, found_at, contacted_at, follow_up_on
       FROM prospects ORDER BY batch_date DESC, score ASC NULLS LAST, id DESC LIMIT 200`;
+    for (const r of rows) r.ad_links = adLinks(r);
     return json({ prospects: rows, today: pickNiche().label, perDay: Number(Netlify.env.get("PROSPECTS_PER_DAY")) || 5, claude: !!Netlify.env.get("ANTHROPIC_API_KEY"), niches: NICHES.map((n) => n.label) });
   }
 
@@ -604,7 +605,9 @@ async function admin(req, db, p, method) {
     const status = b.status === undefined ? null : PROSPECT_STATUSES.includes(b.status) ? b.status : false;
     const entity = b.entity_type === undefined ? null : ["unknown", "company", "sole_trader"].includes(b.entity_type) ? b.entity_type : false;
     const followUp = b.follow_up_on === undefined ? undefined : b.follow_up_on === "" ? null : isDay(b.follow_up_on) ? b.follow_up_on : false;
-    if (status === false || entity === false || followUp === false) return fail(400, "That value isn't allowed.");
+    const adVal = (v) => (v === undefined ? null : ["unknown", "yes", "no"].includes(v) ? v : false);
+    const adsG = adVal(b.ads_google), adsM = adVal(b.ads_meta);
+    if (status === false || entity === false || followUp === false || adsG === false || adsM === false) return fail(400, "That value isn't allowed.");
     const notes = b.notes === undefined ? null : String(b.notes).slice(0, 2000);
     const hasFollow = followUp !== undefined;
     const [row] = await db.sql`
@@ -612,6 +615,8 @@ async function admin(req, db, p, method) {
         status = COALESCE(${status}::text, status),
         entity_type = COALESCE(${entity}::text, entity_type),
         notes = COALESCE(${notes}::text, notes),
+        ads_google = COALESCE(${adsG}::text, ads_google),
+        ads_meta = COALESCE(${adsM}::text, ads_meta),
         follow_up_on = CASE WHEN ${hasFollow} THEN ${hasFollow ? followUp : null}::date ELSE follow_up_on END,
         contacted_at = CASE WHEN ${status}::text IN ('contacted','replied') AND contacted_at IS NULL THEN NOW() ELSE contacted_at END
       WHERE id = ${id} RETURNING id`;
@@ -620,7 +625,7 @@ async function admin(req, db, p, method) {
 
   // POST /api/admin/prospects/:id/proposition  (write the proposal again, with Claude when a key is set)
   if (p[0] === "prospects" && p.length === 3 && p[2] === "proposition" && method === "POST") {
-    const [row] = await db.sql`SELECT id, name, niche, website, audit FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
+    const [row] = await db.sql`SELECT id, name, niche, website, audit, ads_google, ads_meta FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
     if (!row) return fail(404, "Not found.");
     const { proposition, by } = await buildProposition(row, row.audit, nicheFor(row.niche) || { label: row.niche, job: "new enquiries" });
     await db.sql`UPDATE prospects SET proposition = ${JSON.stringify(proposition)}::jsonb, proposition_by = ${by} WHERE id = ${row.id}`;
