@@ -51,6 +51,77 @@ a{color:inherit}
 @media (max-width:600px){.wrap{padding:0 18px}}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
 
+
+/* ---------- hero ticker ---------- */
+.ticker{position:absolute;z-index:3;right:max(28px,calc((100vw - var(--wrap))/2 + 28px));bottom:132px;width:min(340px,30vw);display:none}
+@media (min-width:1000px){.ticker{display:block}}
+.ticker-head{display:flex;align-items:center;gap:8px;margin:0 0 10px 4px;color:var(--mist);font-size:.88rem}
+.ticker-head i{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px rgba(255,183,3,.2)}
+.ticker ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.ticker li{background:rgba(17,28,63,.72);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:12px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:2px 12px;align-items:center}
+.ticker li:nth-child(2){opacity:.7}
+.ticker li:nth-child(3){opacity:.42}
+.ticker li.enter{animation:tk .6s cubic-bezier(.2,.8,.2,1)}
+@keyframes tk{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}
+.tk-ico{grid-column:1;grid-row:1/3;width:34px;height:34px;border-radius:10px;background:rgba(255,183,3,.16);color:var(--amber);display:grid;place-items:center}
+.tk-ico svg{width:18px;height:18px}
+.tk-what{grid-column:2;grid-row:1;font-weight:600;font-size:.95rem;line-height:1.25}
+.tk-meta{grid-column:2;grid-row:2;color:var(--mist);font-size:.84rem}
+.tk-price{grid-column:3;grid-row:1/3;font:700 1.05rem/1 var(--display);color:var(--amber);font-variant-numeric:tabular-nums}
+
+/* ---------- portal preview ---------- */
+.mock{background:var(--white);border:1px solid var(--rule);border-radius:18px;box-shadow:0 50px 80px -50px rgba(10,17,40,.55);overflow:hidden}
+.mock-bar{display:flex;gap:7px;padding:12px 16px;background:#EEF1F7;border-bottom:1px solid var(--rule)}
+.mock-bar i{width:10px;height:10px;border-radius:50%;background:#C6CEDF}
+.mock-body{display:grid;grid-template-columns:150px 1fr;min-height:340px}
+.mock-side{background:var(--midnight);color:var(--mist);padding:16px 12px;font-size:.86rem;display:grid;gap:4px;align-content:start}
+.mock-side b{color:var(--white);display:flex;align-items:center;gap:8px;margin:0 6px 14px;font:700 .92rem/1 var(--display)}
+.mock-side b span{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--amber);color:var(--midnight);font:500 1rem/1 Georgia,serif;padding-bottom:2px}
+.mock-side em{font-style:normal;padding:7px 10px;border-radius:8px}
+.mock-side em.on{background:rgba(255,183,3,.16);color:var(--white)}
+.mock-main{padding:20px;display:grid;gap:14px;align-content:start;min-width:0}
+.mock-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.mock-tile{border:1px solid var(--rule);border-radius:12px;padding:12px}
+.mock-tile .n{font:700 1.5rem/1 var(--display);letter-spacing:-.04em}
+.mock-tile .l{color:var(--slate);font-size:.78rem;margin-top:6px;line-height:1.3}
+.mock-tile.dark{background:var(--midnight);border-color:var(--midnight);color:var(--white)}
+.mock-tile.dark .n{color:var(--amber)}.mock-tile.dark .l{color:var(--mist)}
+.mock-rows{border:1px solid var(--rule);border-radius:12px;overflow:hidden}
+.mock-row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:11px 14px;font-size:.88rem;border-top:1px solid var(--rule)}
+.mock-row:first-child{border-top:0}
+.mock-row small{color:var(--slate);grid-column:1}
+.mock-row .pill{grid-row:1/3;grid-column:2;align-self:center;font-size:.76rem;font-weight:700;padding:3px 9px;border-radius:999px;background:#E2F4EA;color:#0B7345}
+.mock-row .pill.new{background:#FFF2CC;color:#7A5600}
+@media (max-width:560px){.mock-body{grid-template-columns:1fr}.mock-side{display:none}.mock-tiles{grid-template-columns:1fr 1fr}.mock-tile:last-child{display:none}}
+.portal-points{list-style:none;margin:32px 0 0;padding:0}
+.portal-points li{padding:18px 0;border-top:1px solid var(--rule)}
+.portal-points li:last-child{border-bottom:1px solid var(--rule)}
+.portal-points b{display:block;font:700 1.15rem/1.3 var(--display);letter-spacing:-.01em;margin-bottom:2px}
+.portal-points span{color:var(--slate)}
+
+/* sectors with icons */
+.s-ico{width:44px;height:44px;border-radius:12px;background:var(--chalk);display:grid;place-items:center;color:var(--midnight);transition:background .2s,color .2s}
+.s-ico svg{width:22px;height:22px}
+.sectors button:hover .s-ico{background:var(--amber)}
+
+/* sticky call button on phones */
+.sticky-cta{position:fixed;left:12px;right:12px;bottom:12px;z-index:60;display:none;transform:translateY(140%);transition:transform .3s}
+.sticky-cta.show{transform:none}
+.sticky-cta .btn{width:100%;box-shadow:0 12px 30px -8px rgba(10,17,40,.55)}
+@media (max-width:780px){.sticky-cta{display:block}.site-foot{padding-bottom:88px}}
+
+/* footer */
+.site-foot{padding:56px 0 40px}
+.foot-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px}
+@media (max-width:760px){.foot-grid{grid-template-columns:1fr;gap:28px}}
+.site-foot .brand{color:var(--white);margin-bottom:12px}
+.foot-grid p{max-width:26em}
+.foot-grid h4{margin:0 0 12px;font:700 1rem/1 var(--display);color:var(--white)}
+.foot-grid ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.foot-grid a{color:var(--mist);text-decoration:none}
+.foot-grid a:hover{color:var(--white);text-decoration:underline}
+.foot-base{margin-top:40px;padding-top:20px;border-top:1px solid var(--line-dark);font-size:.88rem;color:#8FA0C4}
+
 /* ---------- header ---------- */
 .site-head{position:sticky;top:0;z-index:50;background:rgba(10,17,40,.88);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--line-dark);color:var(--white)}
 .site-head .wrap{display:flex;align-items:center;justify-content:space-between;height:72px;gap:16px}
@@ -125,15 +196,15 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 /* process */
 .steps-head{max-width:36em;margin-bottom:56px}
-.steps-wrap{position:relative}
-.steps-track{position:absolute;left:0;right:0;top:0;height:4px;background:var(--rule);border-radius:4px;overflow:hidden}
+.steps-wrap{position:relative;padding-top:14px}
+.steps-track{position:absolute;left:0;right:0;top:14px;height:4px;background:var(--rule);border-radius:4px;overflow:hidden}
 .steps-fill{display:block;height:100%;width:100%;background:var(--amber);transform:scaleX(0);transform-origin:left;transition:transform 1.8s cubic-bezier(.2,.7,.2,1)}
 .steps-wrap.in .steps-fill{transform:scaleX(1)}
 .steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:32px}
 @media (max-width:920px){.steps{grid-template-columns:1fr 1fr;gap:44px 28px}}
-@media (max-width:560px){.steps{grid-template-columns:1fr}}
-.steps li{padding-top:32px;counter-increment:s}
-.steps li::before{content:counter(s);display:block;font:700 3.4rem/1 var(--display);letter-spacing:-.05em;margin-bottom:16px}
+@media (max-width:560px){.steps{grid-template-columns:1fr}.steps-track{display:none}.steps-wrap{padding-top:0}.steps li::before{top:0;box-shadow:none}.steps li{padding-top:44px}}
+.steps li{position:relative;padding-top:44px;counter-increment:s}
+.steps li::before{content:counter(s);position:absolute;top:-14px;left:0;display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--amber);color:var(--midnight);font:700 1rem/1 var(--display);box-shadow:0 0 0 6px var(--white)}
 .steps ol,.steps{counter-reset:s}
 .steps h3{font-size:1.3rem;letter-spacing:-.02em;margin-bottom:8px}
 .steps p{color:var(--slate)}
@@ -162,13 +233,13 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 /* sectors */
 .sectors{list-style:none;margin:48px 0 0;padding:0;border-top:1px solid var(--ink)}
 .sectors li{border-bottom:1px solid var(--rule)}
-.sectors button{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.4fr) auto;gap:24px;align-items:center;width:100%;padding:26px 8px;cursor:pointer;transition:background .2s,padding .2s}
+.sectors button{all:unset;box-sizing:border-box;display:grid;grid-template-columns:44px minmax(0,1.1fr) minmax(0,1.4fr) auto;gap:24px;align-items:center;width:100%;padding:26px 8px;cursor:pointer;transition:background .2s,padding .2s}
 .sectors button:hover{background:var(--chalk);padding-left:20px}
 .sectors button:focus-visible{outline:3px solid var(--midnight);outline-offset:-3px}
 .sectors .s-name{font:700 clamp(1.5rem,3.2vw,2.3rem)/1.1 var(--display);letter-spacing:-.035em}
 .sectors .s-what{color:var(--slate)}
 .sectors .s-cta{font-weight:700;font-size:.95rem;border-bottom:2px solid var(--amber);padding-bottom:2px}
-@media (max-width:760px){.sectors button{grid-template-columns:1fr;gap:6px;padding:22px 4px}.sectors .s-cta{justify-self:start;margin-top:8px}}
+@media (max-width:760px){.sectors button{grid-template-columns:44px 1fr;gap:4px 14px;padding:22px 4px}.sectors .s-ico{grid-row:1/4}.sectors .s-name,.sectors .s-what,.sectors .s-cta{grid-column:2}.sectors .s-cta{justify-self:start;margin-top:8px}}
 
 /* pricing receipt */
 .price-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:72px;align-items:start}
@@ -250,6 +321,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
         </div>
       </div>
     </div>
+    <aside class="ticker" aria-label="Example enquiries arriving">
+      <p class="ticker-head"><i></i>Example enquiries arriving</p>
+      <ul id="tickerList"></ul>
+    </aside>
     <div class="facts">
       <div class="wrap">
         <ul>
@@ -311,7 +386,41 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
     </div>
   </section>
 
-  <section id="report" class="bg-chalk">
+
+  <section id="login" class="bg-chalk">
+    <div class="wrap report-grid">
+      <div>
+        <h2 class="h2">Your own login, always up to date</h2>
+        <p class="sub">Between Monday reports you can see every enquiry as it arrives, and what each one cost.</p>
+        <ul class="portal-points">
+          <li><b>Every enquiry in one list</b><span>Calls and forms from your website and ads, with the details to follow them up.</span></li>
+          <li><b>Flag anything that isn't genuine</b><span>If an enquiry is spam or a wrong number, tell us in one click and you won't be charged for it.</span></li>
+          <li><b>Your website, step by step</b><span>Watch the build progress and approve it before anything goes live.</span></li>
+        </ul>
+      </div>
+      <figure class="mock" style="margin:0" aria-label="Sample client login with example numbers">
+        <div class="mock-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="mock-body">
+          <div class="mock-side" aria-hidden="true"><b><span>α</span>Alpha Analytica</b><em class="on">Overview</em><em>Enquiries</em><em>Calls</em><em>Ads</em><em>Reports</em><em>Billing</em></div>
+          <div class="mock-main">
+            <div class="mock-tiles">
+              <div class="mock-tile dark"><div class="n">31</div><div class="l">enquiries this week</div></div>
+              <div class="mock-tile"><div class="n">£12.40</div><div class="l">cost per enquiry</div></div>
+              <div class="mock-tile"><div class="n">92%</div><div class="l">of calls answered</div></div>
+            </div>
+            <div class="mock-rows">
+              <div class="mock-row"><b>Boiler not firing up</b><small>Phone call, 1m 12s, from a Google ad</small><span class="pill new">New</span></div>
+              <div class="mock-row"><b>Quote for a new bathroom</b><small>Website form, from a Facebook ad</small><span class="pill">Customer</span></div>
+              <div class="mock-row"><b>Leaking tap, can you come today?</b><small>Phone call, 48s, from a Google ad</small><span class="pill">Customer</span></div>
+            </div>
+            <p class="fine" style="margin:0">Sample, example numbers.</p>
+          </div>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <section id="report" class="bg-white">
     <div class="wrap report-grid">
       <div>
         <h2 class="h2">A report you'll actually read</h2>
@@ -335,21 +444,21 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
     </div>
   </section>
 
-  <section id="sectors" class="bg-white">
+  <section id="sectors" class="bg-chalk">
     <div class="wrap">
       <h2 class="h2" style="max-width:15em">Built for businesses that win customers by phone or form</h2>
       <p class="sub">Pick yours and we'll book a call around it.</p>
       <ul class="sectors">
-        <li><button type="button" data-sector="Gym or fitness"><span class="s-name">Gyms and fitness</span><span class="s-what">Free-trial offers shown to people within a few miles of you.</span><span class="s-cta">Book a call</span></button></li>
-        <li><button type="button" data-sector="Trades (builder, plumber, electrician…)"><span class="s-name">Trades</span><span class="s-what">Call-outs and quote requests from homes in your area.</span><span class="s-cta">Book a call</span></button></li>
-        <li><button type="button" data-sector="Salon or beauty"><span class="s-name">Salons and beauty</span><span class="s-what">New-client bookings, straight into your diary.</span><span class="s-cta">Book a call</span></button></li>
-        <li><button type="button" data-sector="Clinic or health"><span class="s-name">Clinics</span><span class="s-what">New-patient consultations from people searching nearby.</span><span class="s-cta">Book a call</span></button></li>
-        <li><button type="button" data-sector="Restaurant or café"><span class="s-name">Restaurants and cafés</span><span class="s-what">Table bookings, events and private hire.</span><span class="s-cta">Book a call</span></button></li>
+        <li><button type="button" data-sector="Gym or fitness"><span class="s-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5v11M17.5 6.5v11M3 9v6M21 9v6M6.5 12h11"/></svg></span><span class="s-name">Gyms and fitness</span><span class="s-what">Free-trial offers shown to people within a few miles of you.</span><span class="s-cta">Book a call</span></button></li>
+        <li><button type="button" data-sector="Trades (builder, plumber, electrician…)"><span class="s-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></svg></span><span class="s-name">Trades</span><span class="s-what">Call-outs and quote requests from homes in your area.</span><span class="s-cta">Book a call</span></button></li>
+        <li><button type="button" data-sector="Salon or beauty"><span class="s-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg></span><span class="s-name">Salons and beauty</span><span class="s-what">New-client bookings, straight into your diary.</span><span class="s-cta">Book a call</span></button></li>
+        <li><button type="button" data-sector="Clinic or health"><span class="s-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/><path d="M3.2 12h4l2-3 3 6 2-3h6.6"/></svg></span><span class="s-name">Clinics</span><span class="s-what">New-patient consultations from people searching nearby.</span><span class="s-cta">Book a call</span></button></li>
+        <li><button type="button" data-sector="Restaurant or café"><span class="s-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7a3 3 0 0 0 3 3v10M7 2v6M11 2v7a3 3 0 0 1-3 3M17 22V2c-2.5 1-4 4-4 8s1.5 5 4 5"/></svg></span><span class="s-name">Restaurants and cafés</span><span class="s-what">Table bookings, events and private hire.</span><span class="s-cta">Book a call</span></button></li>
       </ul>
     </div>
   </section>
 
-  <section id="pricing" class="bg-chalk">
+  <section id="pricing" class="bg-white">
     <div class="wrap price-grid">
       <div class="price-copy">
         <h2 class="h2">Pay for results, not promises</h2>
@@ -367,7 +476,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
     </div>
   </section>
 
-  <section id="questions" class="bg-white">
+  <section id="questions" class="bg-chalk">
     <div class="wrap faq-grid">
       <h2 class="h2">Questions</h2>
       <div class="faq">
@@ -420,10 +529,24 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
 
 <footer class="site-foot">
   <div class="wrap">
-    <span>© 2026 Alpha Analytica · <a href="/portal/">Client login</a> · <a href="/privacy.html">Privacy</a></span>
-    <span>Websites and ads for local businesses, paid per enquiry.</span>
+    <div class="foot-grid">
+      <div>
+        <a class="brand" href="#top" aria-label="Alpha Analytica home"><span class="brand-mark" aria-hidden="true">α</span>Alpha Analytica</a>
+        <p>Websites and Google and Facebook ads for local businesses, paid per genuine enquiry.</p>
+      </div>
+      <div>
+        <h4>The service</h4>
+        <ul><li><a href="#numbers">Your numbers</a></li><li><a href="#how">How it works</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#questions">Questions</a></li></ul>
+      </div>
+      <div>
+        <h4>Get started</h4>
+        <ul><li><a href="#contact">Book a free call</a></li><li><a href="/portal/">Client login</a></li><li><a href="/privacy.html">Privacy notice</a></li></ul>
+      </div>
+    </div>
+    <p class="foot-base">© 2026 Alpha Analytica</p>
   </div>
 </footer>
+<div class="sticky-cta" id="stickyCta"><a class="btn btn-amber" href="#contact">Book a free call</a></div>
 
 <script>
 (function(){
@@ -594,6 +717,54 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--amber);b
   if (sw) {
     if (reduce || !('IntersectionObserver' in window)) sw.classList.add('in');
     else { var so = new IntersectionObserver(function(e){ if (e[0].isIntersecting) { sw.classList.add('in'); so.disconnect(); } }, {threshold: .3}); so.observe(sw); }
+  }
+
+
+  /* ---------- hero ticker: example enquiries arriving ---------- */
+  var tl = document.getElementById('tickerList');
+  if (tl) {
+    var IC = {
+      call: '<path d="M21 16.5v3a2 2 0 0 1-2.2 2A19 19 0 0 1 2.5 5.2 2 2 0 0 1 4.5 3h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.4 10.8a16 16 0 0 0 4.8 4.8l1.2-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
+      form: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>'
+    };
+    var E = [
+      ['call', 'Boiler not firing up', 'Phone call from a Google ad, 1m 12s', '£25'],
+      ['form', 'Quote for a new bathroom', 'Website form from a Facebook ad', '£25'],
+      ['call', 'Free trial for two people', 'Phone call from a Google ad, 48s', '£15'],
+      ['form', 'Table for 12 on Saturday', 'Website form from a Google ad', '£10'],
+      ['call', 'Can you come out today?', 'Phone call from a Google ad, 2m 3s', '£25'],
+      ['form', 'Consultation next week', 'Website form from a Facebook ad', '£40']
+    ];
+    var n = 0;
+    var make = function(e, anim){
+      var li = document.createElement('li');
+      if (anim) li.className = 'enter';
+      li.innerHTML = '<span class="tk-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + IC[e[0]] + '</svg></span><span class="tk-what"></span><span class="tk-price"></span><span class="tk-meta"></span>';
+      li.querySelector('.tk-what').textContent = e[1];
+      li.querySelector('.tk-meta').textContent = e[2];
+      li.querySelector('.tk-price').textContent = e[3];
+      return li;
+    };
+    for (var k = 2; k >= 0; k--) { tl.appendChild(make(E[k], false)); }
+    n = 3;
+    if (!reduce) {
+      setInterval(function(){
+        if (document.hidden) return;
+        tl.insertBefore(make(E[n % E.length], true), tl.firstChild);
+        n++;
+        while (tl.children.length > 3) tl.removeChild(tl.lastChild);
+      }, 3600);
+    }
+  }
+
+  /* ---------- sticky call button on phones ---------- */
+  var sc = $('stickyCta');
+  if (sc && 'IntersectionObserver' in window) {
+    var heroEl = document.querySelector('.hero'), contactEl = $('contact');
+    var heroOut = false, contactIn = false;
+    var upd = function(){ sc.classList.toggle('show', heroOut && !contactIn); };
+    new IntersectionObserver(function(e){ heroOut = !e[0].isIntersecting; upd(); }).observe(heroEl);
+    new IntersectionObserver(function(e){ contactIn = e[0].isIntersecting; upd(); }, {threshold: .15}).observe(contactEl);
   }
 
   /* ---------- sector picker fills the form ---------- */
