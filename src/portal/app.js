@@ -102,7 +102,24 @@ async function attempt(fn) {
 /* ---------- screens ---------- */
 
 function brand() {
-  return `<div class="brand"><span class="mark" aria-hidden="true">α</span>Alpha Analytica</div>`;
+  return `<div class="brand"><span class="mark" aria-hidden="true">α</span><span class="brand-name">Alpha Analytica</span></div>`;
+}
+
+function authShell(inner) {
+  return `<div class="auth">
+    <aside class="auth-art" aria-hidden="true">
+      ${brand()}
+      <div class="auth-copy">
+        <p class="auth-big">Every enquiry, call and pound, in one place.</p>
+        <p class="auth-small">Your website, your ads and your weekly report, in plain English.</p>
+      </div>
+      <svg class="auth-rings" viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" /><circle cx="100" cy="100" r="64" /><circle cx="100" cy="100" r="36" /><circle cx="100" cy="100" r="9" class="core" /></svg>
+    </aside>
+    <section class="auth-card">
+      <div class="auth-mobile-brand">${brand()}</div>
+      ${inner}
+    </section>
+  </div>`;
 }
 
 function flashHtml() {
@@ -112,8 +129,7 @@ function flashHtml() {
 }
 
 function screenLogin() {
-  return `<div class="center"><div class="card">
-    ${brand()}
+  return authShell(`
     <h1>Client login</h1>
     <p class="sub">See how your website and ads are doing.</p>
     ${flashHtml()}
@@ -123,12 +139,11 @@ function screenLogin() {
       <button class="btn btn-primary" type="submit">Log in</button>
     </form>
     <p class="links"><button class="linkbtn" data-action="to-forgot" type="button">Forgot your password?</button></p>
-  </div></div>`;
+  `);
 }
 
 function screenForgot() {
-  return `<div class="center"><div class="card">
-    ${brand()}
+  return authShell(`
     <h1>Reset your password</h1>
     <p class="sub">Enter your email and we'll send you a link.</p>
     ${flashHtml()}
@@ -137,13 +152,12 @@ function screenForgot() {
       <button class="btn btn-primary" type="submit">Send link</button>
     </form>
     <p class="links"><button class="linkbtn" data-action="to-login" type="button">Back to log in</button></p>
-  </div></div>`;
+  `);
 }
 
 function screenSetPassword() {
   const invite = state.setpw && state.setpw.kind === "invite";
-  return `<div class="center"><div class="card">
-    ${brand()}
+  return authShell(`
     <h1>${invite ? "Welcome. Set your password" : "Choose a new password"}</h1>
     <p class="sub">Use at least 8 characters.</p>
     ${flashHtml()}
@@ -151,7 +165,21 @@ function screenSetPassword() {
       <div class="field"><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
       <button class="btn btn-primary" type="submit">Save password</button>
     </form>
-  </div></div>`;
+  `);
+}
+
+const ICONS = {
+  overview: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  website: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
+  leads: '<path d="M3 13l2.6-7.1A2 2 0 0 1 7.5 4.6h9a2 2 0 0 1 1.9 1.3L21 13"/><path d="M3 13v5a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5h-5.2a3 3 0 0 1-2.8 2h-2a3 3 0 0 1-2.8-2z"/>',
+  calls: '<path d="M21 16.5v3a2 2 0 0 1-2.2 2A19 19 0 0 1 2.5 5.2 2 2 0 0 1 4.5 3h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.4 10.8a16 16 0 0 0 4.8 4.8l1.2-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
+  ads: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  reports: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+  billing: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 15h3"/>',
+  admin: '<path d="M12 3l8 3v6c0 4.5-3.2 8.2-8 9.5C7.2 20.2 4 16.5 4 12V6z"/><path d="M9 12l2 2 4-4"/>',
+};
+function icon(id) {
+  return `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICONS[id] || ""}</svg>`;
 }
 
 const TABS = [
@@ -178,18 +206,25 @@ function screenPortal() {
     body = { overview: viewOverview, website: viewWebsite, leads: viewLeads, calls: viewCalls, ads: viewAds, reports: viewReports, billing: viewBilling }[state.tab]();
   }
 
-  return `<header class="bar"><div class="bar-in">
-      ${brand()}
-      <div class="who"><span>${esc(me.email)}</span><button class="linkbtn" data-action="logout" type="button">Log out</button></div>
-    </div></header>
-    <nav class="tabs" aria-label="Portal sections"><div class="tabs-in">
-      ${tabs.map(([id, label]) => `<button class="tab" data-action="tab" data-tab="${id}" ${state.tab === id ? 'aria-current="page"' : ""} type="button">${label}</button>`).join("")}
-    </div></nav>
-    <main>
+  const item = ([id, label]) => `<button class="nav-item" data-action="tab" data-tab="${id}" ${state.tab === id ? 'aria-current="page"' : ""} type="button">${icon(id)}<span>${label}</span></button>`;
+  return `<div class="shell">
+    <aside class="side">
+      <div class="side-top">${brand()}</div>
+      <nav class="nav" aria-label="Portal sections">
+        ${TABS.map(item).join("")}
+        ${me.isAdmin ? `<div class="nav-sep"><span>Alpha Analytica team</span></div>${item(["admin", "Admin"])}` : ""}
+      </nav>
+      <div class="side-foot">
+        <span class="side-email" title="${esc(me.email)}">${esc(me.email)}</span>
+        <button class="side-out" data-action="logout" type="button">Log out</button>
+      </div>
+    </aside>
+    <main class="main" id="main">
       ${viewing ? `<div class="banner"><span>Viewing as <b>${esc(viewing)}</b></span><button class="btn btn-ghost btn-small" data-action="stop-view" type="button">Back to admin</button></div>` : ""}
       ${flashHtml()}
       ${body}
-    </main>`;
+    </main>
+  </div>`;
 }
 
 /* ---------- client views ---------- */
@@ -217,7 +252,7 @@ function viewOverview() {
   return `<div class="pagehead"><h1>${esc(d.client.name)}</h1><p>Here's where things stand.</p></div>
     <div class="tiles">
       <div class="tile"><div class="n">${s.done} of ${s.total}</div><div class="l">website steps done</div></div>
-      <div class="tile"><div class="n">${s.last7}</div><div class="l">enquiries in the last 7 days</div></div>
+      <div class="tile key"><div class="n">${s.last7}</div><div class="l">enquiries in the last 7 days</div></div>
       <div class="tile"><div class="n">${s.last30}</div><div class="l">enquiries in the last 30 days</div></div>
       <div class="tile"><div class="n">${cpe}</div><div class="l">cost per enquiry, last 30 days</div></div>
     </div>
@@ -634,9 +669,9 @@ function viewAdminOverview() {
   const o = state.ov;
   if (!o) return `<p class="loading">Loading…</p>`;
   const t = o.totals;
-  const tile = (n, l, extra = "") => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div>${extra}</div>`;
+  const tile = (n, l, extra = "", cls = "") => `<div class="tile${cls}"><div class="n">${n}</div><div class="l">${l}</div>${extra}</div>`;
   return `<div class="tiles">
-      ${tile(t.enquiries_today, "Enquiries today")}
+      ${tile(t.enquiries_today, "Enquiries today", "", " key")}
       ${tile(t.enq7, "Enquiries, last 7 days", `<div class="small">${trend(t.enq7, t.enqPrev7)} vs the week before</div>`)}
       ${tile(t.enq30, "Enquiries, last 30 days", `<div class="small muted">${t.customers30} became customers</div>`)}
       ${tile(pctText(t.answered30, t.calls30), "Calls answered", `<div class="small muted">${t.calls30} calls in 30 days</div>`)}
@@ -764,7 +799,7 @@ function viewAdminPerformance() {
   return `<div class="panel"><h2>Where enquiries come from (30 days)</h2>
       ${p.channels.length ? `<div class="tablewrap"><table><thead><tr><th>Source</th><th>Enquiries</th><th class="num">Ad spend</th><th class="num">Cost per enquiry</th><th class="num">Good</th><th class="num">Customers</th><th class="num">Spam</th></tr></thead><tbody>
       ${p.channels.map((c) => `<tr><td><b>${esc(c.name)}</b></td>
-        <td><div class="bar"><span style="width:${Math.round((c.enquiries / maxEnq) * 100)}%"></span></div>${c.enquiries}</td>
+        <td><div class="meter"><span style="width:${Math.round((c.enquiries / maxEnq) * 100)}%"></span></div>${c.enquiries}</td>
         <td class="num">${c.spend_pence ? money(c.spend_pence) : "–"}</td><td class="num">${cpeChip(c.cost_per_enquiry_pence)}</td>
         <td class="num">${c.qualified}</td><td class="num">${c.customers}</td><td class="num">${c.spam_pct ? `<span class="${c.spam_pct >= 25 ? "bad-text" : ""}">${c.spam_pct}%</span>` : "0%"}</td></tr>`).join("")}</tbody></table></div>
       <p class="muted small">Cost per enquiry is a channel's ad spend divided by real enquiries recorded here, so it matches what clients are billed for. Green is the cheapest channel, red the dearest.</p>`
