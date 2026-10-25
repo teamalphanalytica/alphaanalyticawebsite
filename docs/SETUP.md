@@ -80,3 +80,35 @@ Re-sending a day replaces that day's numbers.
 
 ## Not tested against the real services
 This was built and tested without access to live Twilio, Google Ads, Meta, or a Netlify database. Test each on the Deploy Preview before relying on it.
+
+## Adding a client (the quick way)
+
+Admin > Add a client. Enter the business name, the owner's email and phone, and the price per enquiry. Ad account ids are optional and can be added later. Everything is checked before anything is created, the owner's login is linked automatically, and (once self-serve numbers are on) their tracking number is bought and routed straight away.
+
+The client page then shows a **Launch checklist** with the single next step, a **Send a test enquiry** button that proves the website link works without being billed, and a **Message to send the client** with your Google and Meta ids already filled in. Invite the owner's email once in Netlify Identity.
+
+## Automatic billing (Stripe)
+
+Everything is built and sits idle until you add the keys. Start in Stripe **test mode**.
+
+1. Create a Stripe account (stripe.com) and turn on **Bacs Direct Debit** under Settings > Payment methods.
+2. In Stripe, Developers > API keys, create a **restricted key** with write access to: Customers, Checkout Sessions, Invoices, Invoice Items, and read access to SetupIntents. Add it to Netlify as `STRIPE_SECRET_KEY`.
+3. In Stripe, Developers > Webhooks, add an endpoint `https://YOUR-SITE/api/stripe/webhook` with these events: `setup_intent.succeeded`, `invoice.finalized`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible`. Copy its signing secret into Netlify as `STRIPE_WEBHOOK_SECRET`.
+4. In Stripe, Settings > Billing > Subscriptions and emails, turn on **Email finalised invoices and credit notes**, **Send reminders for unpaid invoices**, and **Smart Retries** for failed payments. That is what makes chasing automatic.
+5. Optional Netlify variables: `BILLING_MODE` (`approve` by default; set `auto` once you trust it), `BILLING_DISPUTE_DAYS` (7), `BILLING_DAY` (8), and `STRIPE_TAX_RATE_ID` if you charge VAT.
+
+How it runs: each client adds a card or Direct Debit once in their Billing tab. They can dispute an enquiry within 7 days. From the 8th, a daily job invoices last month once per client. It waits for any open disputes, and never double-bills. In `approve` mode each invoice is a draft until you press **Approve and send** in Admin. Failed payments, drafts and disputes show on your Needs attention list.
+
+To test: set a price for a test client, have them save the Stripe test card 4242 4242 4242 4242, then press **Create last month's invoices now** in Admin.
+
+## Call recording, transcripts and summaries
+
+Off until you switch it on. Callers always hear a notice first ("This call may be recorded..."), which UK rules expect. Change the wording with `CALL_NOTICE`.
+
+1. In Twilio, Voice Intelligence must be enabled on your account (Console > Voice Intelligence). The first recorded call creates the transcription service for you.
+2. In Netlify set `CALL_RECORDING=on`.
+3. Optional: set `ANTHROPIC_API_KEY` so each call also gets a summary and a genuine / not genuine verdict. `SUMMARY_MODEL` picks the model (a small, cheap one by default).
+4. Optional: `CALL_RETENTION_DAYS` (default 90). After that the audio and transcript are deleted from Twilio and from the portal; the short summary stays.
+5. If Twilio rejects the language, set `TRANSCRIPT_LANGUAGE` (default `en-GB`; try `en-US`). It can't be changed once the service exists, so delete the `alpha-analytica-calls` service in Twilio first.
+
+Check the first real call: in the transcript "Caller" is the person who rang and "Business" is the client's phone. Recordings and transcripts are only visible to admins, from Admin > Calls. Your privacy notice already covers this; tell clients in your agreement that calls to their tracking number are recorded.
