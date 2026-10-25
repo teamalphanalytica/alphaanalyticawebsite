@@ -467,3 +467,35 @@ test("likePattern escapes wildcards so searches are literal", () => {
   assert.equal(likePattern("50%_off"), "%50\\%\\_off%");
   assert.equal(likePattern("  "), null);
 });
+
+/* ---------- conversion quality ---------- */
+import { googleConversionValue, parseCallClick, pickCallClick } from "./util.mjs";
+
+test("googleConversionValue uses the price per enquiry, or 1 when unset", () => {
+  assert.equal(googleConversionValue(2500), 25);
+  assert.equal(googleConversionValue(1999), 19.99);
+  assert.equal(googleConversionValue(null), 1);
+  assert.equal(googleConversionValue(0), 1);
+  assert.equal(googleConversionValue("x"), 1);
+});
+
+test("parseCallClick keeps a valid number and ad click ids only", () => {
+  const ok = parseCallClick({ number: "0161 234 5678", gclid: "Cj0KCQjw_TEST-123abc", page_url: "https://joe.example/boilers?x=1#top" });
+  assert.deepEqual(ok, { number: "+441612345678", gclid: "Cj0KCQjw_TEST-123abc", gbraid: null, wbraid: null, fbc: null, fbp: null, page_url: "https://joe.example/boilers" });
+  assert.equal(parseCallClick({ number: "0161 234 5678" }), null, "no ad click, nothing to credit");
+  assert.equal(parseCallClick({ number: "not a number", gclid: "Cj0KCQjw_TEST-123abc" }), null);
+  assert.equal(parseCallClick({ number: "+441612345678", gclid: "<script>" }), null);
+  assert.equal(parseCallClick({ number: "+441612345678", gclid: "Cj0KCQjw_TEST-123abc", page_url: "javascript:alert(1)" }).page_url, null);
+  assert.equal(parseCallClick(null), null);
+});
+
+test("pickCallClick credits a call only when one ad click tapped the number just before", () => {
+  const at = "2026-10-25T12:00:00Z";
+  const c = (s, gclid) => ({ id: s, gclid, clicked_at: new Date(Date.parse(at) - s * 1000).toISOString() });
+  assert.equal(pickCallClick([c(20, "A")], at).gclid, "A");
+  assert.equal(pickCallClick([c(30, "A"), c(10, "A")], at).id, 10, "same visitor tapping twice: latest tap");
+  assert.equal(pickCallClick([c(30, "A"), c(10, "B")], at), null, "two different visitors: don't guess");
+  assert.equal(pickCallClick([c(200, "A")], at), null, "too long before the call");
+  assert.equal(pickCallClick([{ id: 1, gclid: "A", clicked_at: "2026-10-25T12:00:30Z" }], at), null, "after the call started");
+  assert.equal(pickCallClick([], at), null);
+});
