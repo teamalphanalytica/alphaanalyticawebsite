@@ -80,3 +80,9 @@ Re-sending a day replaces that day's numbers.
 
 ## Not tested against the real services
 This was built and tested without access to live Twilio, Google Ads, Meta, or a Netlify database. Test each on the Deploy Preview before relying on it.
+
+## Adding a client (the quick way)
+
+Admin > Add a client. Enter the business name, the owner's email and phone, and the price per enquiry. Ad account ids are optional and can be added later. Everything is checked before anything is created, the owner's login is linked automatically, and (once self-serve numbers are on) their tracking number is bought and routed straight away.
+
+The client page then shows a **Launch checklist** with the single next step, a **Send a test enquiry** button that proves the website link works without being billed, and a **Message to send the client** with your Google and Meta ids already filled in. Invite the owner's email once in Netlify Identity.

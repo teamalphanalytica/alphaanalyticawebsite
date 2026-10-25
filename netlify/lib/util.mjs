@@ -364,7 +364,7 @@ export function connectionStates(c, today) {
 /** What a client may tell us about their business. Unknown fields are ignored. */
 export const INTAKE_FIELDS = {
   legal_name: 120, address: 240, services: 1500, area: 300, hours: 300, monthly_budget: 12,
-  approver_name: 120, domain: 120, facebook_page: 300, google_ads: 40, notes: 1500,
+  approver_name: 120, contact_phone: 30, domain: 120, facebook_page: 300, google_ads: 40, notes: 1500,
 };
 
 export function cleanIntake(input) {
@@ -476,4 +476,123 @@ export const metaEventUsable = (ev) => Boolean(ev.user_data.em || ev.user_data.p
 export function googleConversionTime(ts) {
   const d = new Date(ts);
   return `${d.toISOString().slice(0, 19).replace("T", " ")}+0000`;
+}
+
+/* ---------- onboarding a new client ---------- */
+
+/**
+ * Checks the whole "add a client" form before anything is created, so a typo can never
+ * leave a half-built client behind. Returns { errors: [{field, message}], value }.
+ */
+export function validateNewClient(input) {
+  const errors = [];
+  const bad = (field, message) => errors.push({ field, message });
+  const value = {};
+
+  value.name = clean(input?.name, 120);
+  if (!value.name) bad("name", "Enter the business name.");
+  value.sector = clean(input?.sector, 80);
+
+  value.website_url = null;
+  if (clean(input?.website_url)) {
+    value.website_url = safeUrl(input.website_url);
+    if (!value.website_url) bad("website_url", "The website must start with https:// (or http://).");
+  }
+
+  value.owner_email = clean(input?.owner_email, 254)?.toLowerCase() ?? null;
+  if (!isEmail(value.owner_email)) bad("owner_email", "Enter the business owner's email. It's the address they'll log in with.");
+
+  value.owner_phone = null;
+  if (clean(input?.owner_phone, 30)) {
+    value.owner_phone = normaliseUkPhone(String(input.owner_phone));
+    if (!value.owner_phone) bad("owner_phone", "That doesn't look like a UK phone number. Try 07700 900123 or 0161 234 5678.");
+  }
+
+  value.price_per_enquiry_pence = null;
+  const priceText = clean(input?.price_per_enquiry, 12);
+  if (priceText) {
+    const pence = Math.round(Number(priceText) * 100);
+    if (!Number.isFinite(pence) || pence < 0 || pence > 10_000_000) bad("price_per_enquiry", "Price per enquiry must be an amount in pounds, like 25.");
+    else value.price_per_enquiry_pence = pence;
+  }
+
+  value.google_customer_id = clean(input?.google_customer_id, 30)?.replace(/\D/g, "") || null;
+  if (value.google_customer_id && !/^\d{10}$/.test(value.google_customer_id)) bad("google_customer_id", "A Google Ads customer id has 10 digits, like 123-456-7890.");
+  value.meta_ad_account_id = clean(input?.meta_ad_account_id, 30)?.replace(/\D/g, "") || null;
+  if (value.meta_ad_account_id && !/^\d{5,20}$/.test(value.meta_ad_account_id)) bad("meta_ad_account_id", "A Facebook ad account id is a number, like 1234567890.");
+
+  return { errors, value };
+}
+
+/**
+ * The launch checklist: every step to get a client fully live, in order, with what's done,
+ * what's waiting on someone, and the single next thing to do. `c` is a plain object of facts
+ * gathered from the database, so this stays easy to test.
+ */
+export function launchChecklist(c) {
+  const item = (key, title, state, next) => ({ key, title, state, next: state === "done" ? null : next });
+  const items = [];
+
+  items.push(item("login", "Owner can log in to the portal", c.hasLogin ? "done" : "todo",
+    "Invite their email in Netlify Identity, then link it under Logins."));
+
+  items.push(item("number", "Tracking phone number live", c.hasNumber ? "done" : "todo",
+    c.selfServeReady && c.forwardPhone ? "Press 'Set up number' and we'll buy it." : "Add their number under Tracking phone numbers (or finish the Twilio bundle so it can be automatic)."));
+
+  items.push(item("website", "Website live and linked", c.websiteUrl ? "done" : "todo",
+    "Add the live website address under Website links."));
+
+  items.push(item("enquiries", "Website enquiries reaching the portal", c.hasTestOrRealLead ? "done" : "todo",
+    "Add the webhook address to the site's Netlify form notifications, then press 'Send a test enquiry'."));
+
+  items.push(item("details", "Owner has filled in their business details", c.hasIntake ? "done" : "waiting",
+    "Ask them to fill in the Website tab. This is what the ads and site are built from."));
+
+  items.push(item("google", "Google Ads connected and sending results",
+    !c.googleId ? "todo" : c.googleLive ? "done" : "waiting",
+    !c.googleId ? "Get their Google Ads customer id and add it under Ad accounts." : "Send the link request from your manager account and ask them to accept it. Results appear within a day."));
+
+  items.push(item("meta", "Facebook ads connected and sending results",
+    !c.metaId ? "todo" : c.metaLive ? "done" : c.metaError ? "error" : "waiting",
+    !c.metaId ? "Get their Meta ad account id and add it under Ad accounts." : c.metaError ? "Check they've shared the ad account with your system user." : "Ask them to share the ad account with your business. Results appear after the next sync."));
+
+  items.push(item("conversions", "Enquiries being sent back to Google and Facebook",
+    (c.googleId && c.googleConversionSent) || (c.metaPixel && c.metaConversionSent) ? "done" : "todo",
+    "Create the 'Portal enquiry' conversion action in Google Ads and add their Facebook pixel id. This starts on its own after the first real enquiry."));
+
+  items.push(item("price", "Price per enquiry set", c.priceSet ? "done" : "todo",
+    "Set the price per enquiry so billing is right."));
+
+  const required = items.filter((i) => i.key !== "conversions");
+  const done = items.filter((i) => i.state === "done").length;
+  return {
+    items,
+    done,
+    total: items.length,
+    ready: required.every((i) => i.state === "done"),
+    nextStep: items.find((i) => i.state === "todo" || i.state === "error") || items.find((i) => i.state === "waiting") || null,
+  };
+}
+
+/** The message to send a new client: exactly what they need to do, nothing else. */
+export function clientWelcomeMessage({ businessName, portalUrl, googleManagerId, metaBusinessId }) {
+  const lines = [
+    `Hi,`,
+    ``,
+    `Welcome to Alpha Analytica. Here's everything we need from you to get ${businessName} started. It takes about 10 minutes.`,
+    ``,
+    `1. Log in`,
+    `   You'll get an email invite to our portal. Click it and choose a password. Your portal is here: ${portalUrl}`,
+    ``,
+    `2. Tell us about your business`,
+    `   In the portal, open the Website tab and fill in the form. This is what we build your website and ads from.`,
+  ];
+  if (googleManagerId) {
+    lines.push(``, `3. Link your Google Ads`, `   In Google Ads, go to Admin > Access and security > Managers and send us an access request using our manager id: ${googleManagerId}. If you don't have a Google Ads account yet, just tell us and we'll create one.`);
+  }
+  if (metaBusinessId) {
+    lines.push(``, `4. Share your Facebook ads`, `   In Meta Business Settings, go to Partners > Add > Give a partner access to your assets, and enter our business id: ${metaBusinessId}. Share your ad account and your pixel. If you don't have these yet, tell us and we'll set them up.`);
+  }
+  lines.push(``, `5. Your phone number`, `   Tell us the number you'd like enquiry calls forwarded to. We'll give your website and ads a tracking number so every call is counted.`, ``, `Reply to this message if you get stuck on any step. We'll help.`, ``, `Thanks,`, `Alpha Analytica`);
+  return lines.join("\n");
 }

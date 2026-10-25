@@ -270,3 +270,63 @@ test("parseLead picks up click ids from a Netlify webhook", () => {
 test("googleConversionTime", () => {
   assert.equal(googleConversionTime("2026-10-24T14:05:09.123Z"), "2026-10-24 14:05:09+0000");
 });
+
+/* ---------- onboarding ---------- */
+import { validateNewClient, launchChecklist, clientWelcomeMessage } from "./util.mjs";
+
+test("validateNewClient accepts a good form and tidies it", () => {
+  const { errors, value } = validateNewClient({
+    name: "  Smith Plumbing ", owner_email: "Bob@Smith.co.uk", owner_phone: "07700 900123",
+    price_per_enquiry: "25", google_customer_id: "123-456-7890", meta_ad_account_id: "act 12345678", website_url: "https://smith.co.uk",
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(value.name, "Smith Plumbing");
+  assert.equal(value.owner_email, "bob@smith.co.uk");
+  assert.equal(value.owner_phone, "+447700900123");
+  assert.equal(value.price_per_enquiry_pence, 2500);
+  assert.equal(value.google_customer_id, "1234567890");
+  assert.equal(value.meta_ad_account_id, "12345678");
+});
+
+test("validateNewClient reports every mistake at once, by field", () => {
+  const { errors } = validateNewClient({ name: "", owner_email: "nope", owner_phone: "12345", price_per_enquiry: "abc", google_customer_id: "123", meta_ad_account_id: "12", website_url: "javascript:alert(1)" });
+  assert.deepEqual(errors.map((e) => e.field).sort(), ["google_customer_id", "meta_ad_account_id", "name", "owner_email", "owner_phone", "price_per_enquiry", "website_url"]);
+});
+
+test("validateNewClient treats optional boxes as optional", () => {
+  const { errors, value } = validateNewClient({ name: "A", owner_email: "a@b.co" });
+  assert.deepEqual(errors, []);
+  assert.equal(value.owner_phone, null);
+  assert.equal(value.price_per_enquiry_pence, null);
+});
+
+const blank = { hasLogin: false, hasNumber: false, websiteUrl: null, hasTestOrRealLead: false, hasIntake: false, priceSet: false };
+
+test("launchChecklist starts with everything to do and points at the first step", () => {
+  const r = launchChecklist(blank);
+  assert.equal(r.done, 0);
+  assert.equal(r.ready, false);
+  assert.equal(r.nextStep.key, "login");
+});
+
+test("launchChecklist is ready only when every required step is done, ignoring conversions", () => {
+  const full = { hasLogin: true, hasNumber: true, websiteUrl: "https://x.co", hasTestOrRealLead: true, hasIntake: true, googleId: "1", googleLive: true, metaId: "2", metaLive: true, priceSet: true };
+  const r = launchChecklist(full);
+  assert.equal(r.ready, true);
+  assert.equal(r.items.find((i) => i.key === "conversions").state, "todo");
+  assert.equal(launchChecklist({ ...full, metaLive: false }).ready, false);
+});
+
+test("launchChecklist separates waiting on someone else from needing action", () => {
+  const r = launchChecklist({ ...blank, googleId: "1", metaId: "2", metaError: true });
+  assert.equal(r.items.find((i) => i.key === "google").state, "waiting");
+  assert.equal(r.items.find((i) => i.key === "meta").state, "error");
+});
+
+test("clientWelcomeMessage includes the agency ids and the portal link", () => {
+  const m = clientWelcomeMessage({ businessName: "Smith Plumbing", portalUrl: "https://p.example", googleManagerId: "813-967-5839", metaBusinessId: "1556086649616024" });
+  assert.match(m, /Smith Plumbing/);
+  assert.match(m, /813-967-5839/);
+  assert.match(m, /1556086649616024/);
+  assert.match(m, /https:\/\/p\.example/);
+});

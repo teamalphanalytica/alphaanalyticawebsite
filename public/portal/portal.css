@@ -147,3 +147,12 @@ details.report summary::-webkit-details-marker{display:none}
   .chart{break-inside:avoid;background:#F3F5F9}
   .tile{break-inside:avoid}
 }
+
+/* add-client wizard and launch checklist */
+.grouphead{margin:18px 0 4px;font-size:1rem;color:var(--slate)}
+.field-err{margin:0;color:var(--red);font-size:.9rem;font-weight:600}
+input[aria-invalid="true"]{border-color:var(--red);outline-color:var(--red)}
+.checks.launch li{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.checks.launch li::before{display:none}
+.checks.launch li{padding-left:0}
+.code-area{width:100%;font:.9rem/1.5 ui-monospace,monospace;padding:10px;border:1px solid var(--rule);border-radius:8px;background:var(--chalk);color:var(--ink)}

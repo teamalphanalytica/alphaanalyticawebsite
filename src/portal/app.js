@@ -19,6 +19,7 @@ const state = {
   billing: null, // { month, rows }
   billingMonth: new Date().toISOString().slice(0, 7),
   adminDetail: null, // { client, users, steps }
+  newClient: { values: {}, errors: {} }, // the add-client form: what was typed, and what to fix
   flash: null, // { type: "ok" | "err", text }
   setpw: null, // { kind: "invite" | "recovery", token }
 };
@@ -47,9 +48,10 @@ const dayKey = (d) => String(d).slice(0, 10);
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
 class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, errors) {
     super(message);
     this.status = status;
+    this.errors = errors || [];
   }
 }
 
@@ -66,7 +68,7 @@ async function api(path, { method = "GET", body } = {}) {
   } catch {
     /* no body */
   }
-  if (!res.ok) throw new ApiError((json && json.error) || "Something went wrong. Please try again.", res.status);
+  if (!res.ok) throw new ApiError((json && json.error) || "Something went wrong. Please try again.", res.status, json && json.errors);
   return json;
 }
 
@@ -353,7 +355,7 @@ const INTAKE_LABELS = [
   ["legal_name", "Legal business name", "input"], ["address", "Business address", "input"],
   ["services", "Services you offer, with prices", "textarea"], ["area", "Area you cover", "input"],
   ["hours", "Opening hours", "input"], ["monthly_budget", "Monthly ad budget (£)", "input"],
-  ["approver_name", "Who approves the website and ads?", "input"], ["domain", "Your website address, if you have one", "input"],
+  ["approver_name", "Who approves the website and ads?", "input"], ["contact_phone", "Phone number for enquiry calls", "input"], ["domain", "Your website address, if you have one", "input"],
   ["facebook_page", "Your Facebook page link", "input"], ["google_ads", "Do you already have a Google Ads account? (yes / no)", "input"],
   ["notes", "Anything else we should know?", "textarea"],
 ];
@@ -508,11 +510,62 @@ function viewAdmin() {
         : `<p class="muted">No clients yet. Add your first one below.</p>`}
     </div>
     <div class="panel"><h2>Add a client</h2>
-      <form class="form" data-form="create-client">
-        <div class="field"><label for="cn">Business name</label><input id="cn" name="name" required maxlength="120"></div>
-        <div class="field"><label for="cs">Sector</label><input id="cs" name="sector" maxlength="80" placeholder="Gym, plumber, salon…"></div>
-        <button class="btn btn-primary" type="submit">Add client</button>
-      </form></div>`;
+      <p class="muted small">Fill this in once. We check everything before anything is created, make their login, and show you exactly what's left to do.</p>
+      ${newClientForm()}</div>`;
+}
+
+
+const NEW_CLIENT_FIELDS = [
+  ["The business", [
+    ["name", "Business name", "text", "required", ""], ["sector", "Sector", "text", "", "Gym, plumber, salon…"],
+    ["website_url", "Their current website, if they have one", "url", "", "https://"],
+  ]],
+  ["Their login and phone", [
+    ["owner_email", "Owner's email (they log in with this)", "email", "required", "name@theirbusiness.co.uk"],
+    ["owner_phone", "Number their enquiry calls should ring", "tel", "", "07700 900123"],
+    ["price_per_enquiry", "Price per genuine enquiry (£)", "number", "", "25.00"],
+  ]],
+  ["Ad accounts (optional, you can add these later)", [
+    ["google_customer_id", "Google Ads customer id", "text", "", "123-456-7890"],
+    ["meta_ad_account_id", "Facebook ad account id", "text", "", "1234567890"],
+  ]],
+];
+
+function newClientForm() {
+  const { values, errors } = state.newClient;
+  return `<form class="form" data-form="create-client" novalidate>
+    ${NEW_CLIENT_FIELDS.map(([group, fields]) => `<h3 class="grouphead">${esc(group)}</h3>${fields.map(([k, label, type, req, ph]) => `
+      <div class="field"><label for="nc_${k}">${esc(label)}</label>
+        <input id="nc_${k}" name="${k}" type="${type}" ${req} maxlength="254" placeholder="${esc(ph)}" value="${esc(values[k] || "")}"
+          ${type === "number" ? 'min="0" step="0.01"' : ""} ${errors[k] ? `aria-invalid="true" aria-describedby="nce_${k}"` : ""}>
+        ${errors[k] ? `<p class="field-err" id="nce_${k}">${esc(errors[k])}</p>` : ""}</div>`).join("")}`).join("")}
+    <button class="btn btn-primary" type="submit">Add client</button>
+  </form>`;
+}
+
+function checklistPanel() {
+  const { checklist, welcome, selfServeReady, client } = state.adminDetail;
+  if (!checklist) return "";
+  const label = { done: "Done", waiting: "Waiting", todo: "To do", error: "Problem" };
+  const cls = { done: "done", waiting: "doing", todo: "todo", error: "spam" };
+  const next = checklist.nextStep;
+  const extra = (it) => {
+    if (it.state === "done") return "";
+    if (it.key === "number" && selfServeReady && client.intake?.contact_phone) return `<button class="btn btn-primary btn-small" data-action="setup-number" type="button">Set up number</button>`;
+    if (it.key === "enquiries") return `<button class="btn btn-ghost btn-small" data-action="test-enquiry" type="button">Send a test enquiry</button>`;
+    return "";
+  };
+  return `<div class="panel"><h2>Launch checklist</h2>
+    <p>${checklist.ready
+      ? `<span class="chip done">Ready</span> Everything needed to run this client is in place.`
+      : `<b>${checklist.done} of ${checklist.total}</b> done.${next ? ` <b>Next:</b> ${esc(next.title)}. ${esc(next.next)}` : ""}`}</p>
+    <ul class="checks launch">${checklist.items.map((it) => `<li class="${esc(it.state)}"><span class="chip ${cls[it.state]}">${label[it.state]}</span> <b>${esc(it.title)}</b>
+      ${it.next ? `<span class="muted small">${esc(it.next)}</span>` : ""} ${extra(it)}</li>`).join("")}</ul>
+    <h3 class="grouphead">Message to send the client</h3>
+    <p class="muted small">Copy this and send it. It lists exactly what they need to do, with your account ids already filled in.</p>
+    <textarea id="welcome" class="code-area" readonly rows="14">${esc(welcome)}</textarea>
+    <p><button class="btn btn-ghost btn-small" data-action="copy-welcome" type="button">Copy message</button></p>
+  </div>`;
 }
 
 function viewAdminClient() {
@@ -521,6 +574,8 @@ function viewAdminClient() {
   return `<div class="pagehead"><div class="rowhead"><h1>${esc(client.name)}</h1>
       <span><button class="btn btn-ghost btn-small" data-action="admin-back" type="button">All clients</button>
       <button class="btn btn-primary btn-small" data-action="view-as" data-id="${client.id}" type="button">View as client</button></span></div></div>
+
+    ${checklistPanel()}
 
     <div class="panel"><h2>Build progress</h2><ol class="steps">
       ${steps.map((st, i) => `<li class="step ${esc(st.status)}"><span class="dot" aria-hidden="true">${st.status === "done" ? "✓" : i + 1}</span>
@@ -672,7 +727,7 @@ async function loadAdminList() {
 
 async function loadAdminClient(id) {
   const [detail, portal] = await Promise.all([api(`/admin/clients/${id}`), api(`/portal?client=${id}`)]);
-  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, conversions: detail.conversions, steps: portal.steps };
+  state.adminDetail = { client: detail.client, users: detail.users, numbers: detail.numbers, drafts: detail.drafts, connections: detail.connections, conversions: detail.conversions, checklist: detail.checklist, welcome: detail.welcome, selfServeReady: detail.selfServeReady, steps: portal.steps };
 }
 
 /* ---------- events ---------- */
@@ -754,6 +809,31 @@ app.addEventListener("click", (e) => {
     });
   }
 
+  if (a === "setup-number") {
+    return attempt(async () => {
+      const r = await api(`/admin/clients/${state.adminDetail.client.id}/setup-number`, { method: "POST", body: {} });
+      await loadAdminClient(state.adminDetail.client.id);
+      flash("ok", `Tracking number ${r.number} is live and forwards to their phone.`);
+    });
+  }
+
+  if (a === "test-enquiry") {
+    return attempt(async () => {
+      await api(`/admin/clients/${state.adminDetail.client.id}/test-enquiry`, { method: "POST", body: {} });
+      await loadAdminClient(state.adminDetail.client.id);
+      flash("ok", "Test enquiry added to their Enquiries list, marked as spam so it's never counted or billed. Now check it appears when you submit their real website's form.");
+    });
+  }
+
+  if (a === "copy-welcome") {
+    const box = document.getElementById("welcome");
+    if (!box) return;
+    const ok = () => { flash("ok", "Message copied. Paste it into an email to the client."); render(); };
+    const fallback = () => { box.focus(); box.select(); flash("err", "Press Ctrl+C (or Cmd+C) to copy the selected message."); render(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(box.value).then(ok, fallback); else fallback();
+    return;
+  }
+
   if (a === "view-as") {
     return attempt(async () => {
       state.viewAs = el.dataset.id;
@@ -832,11 +912,22 @@ app.addEventListener("submit", (e) => {
       });
 
     case "create-client":
+      state.newClient = { values: { ...f }, errors: {} };
       return attempt(async () => {
-        const { id: newId } = await api("/admin/clients", { method: "POST", body: { name: f.name, sector: f.sector } });
-        await loadAdminList();
-        await loadAdminClient(newId);
-        flash("ok", "Client added. Link their login below.");
+        try {
+          const r = await api("/admin/clients", { method: "POST", body: f });
+          state.newClient = { values: {}, errors: {} };
+          await loadAdminList();
+          await loadAdminClient(r.id);
+          flash("ok", `Client created and their login linked.${r.number ? ` Tracking number ${r.number} is live.` : r.numberNote ? ` ${r.numberNote}` : ""} Follow the launch checklist below.`);
+        } catch (e) {
+          if (e instanceof ApiError && e.errors.length) {
+            for (const x of e.errors) state.newClient.errors[x.field] = x.message;
+            setTimeout(() => { const bad = document.querySelector('input[aria-invalid="true"]'); if (bad) { bad.scrollIntoView({ block: "center" }); bad.focus(); } }, 0);
+            throw new Error(`Please fix ${e.errors.length === 1 ? "the highlighted box" : `the ${e.errors.length} highlighted boxes`} and try again.`);
+          }
+          throw e;
+        }
       });
 
     case "client-links":

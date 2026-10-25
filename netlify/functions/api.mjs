@@ -14,7 +14,7 @@ import { getUser } from "@netlify/identity";
 import {
   LEAD_STATUSES, STEP_STATUSES, PLATFORMS, DEFAULT_STEPS, HANGUP_TWIML,
   clean, toInt, isEmail, isE164, isDay, safeUrl, slugify, parseLead, readBody, sameOrigin, parseAdminEmails,
-  safeEqual, normaliseUkPhone, monthRange, toCsv, googleConversionTime, connectionStates, cleanIntake, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
+  safeEqual, normaliseUkPhone, monthRange, toCsv, googleConversionTime, connectionStates, cleanIntake, validateNewClient, launchChecklist, clientWelcomeMessage, findAlerts, validTwilioSignature, dialTwiml, sayHangupTwiml, countsAsEnquiry, parseAdRows,
 } from "../lib/util.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions, conversionDelayHours } from "../lib/jobs.mjs";
 
@@ -209,27 +209,56 @@ async function admin(req, db, p, method) {
     return json({ clients: rows });
   }
 
-  // POST /api/admin/clients
+  // POST /api/admin/clients  (the whole "add a client" form: everything is checked first, then created together)
   if (p[0] === "clients" && p.length === 1 && method === "POST") {
-    const { value } = await readBody(req);
-    const name = clean(value?.name, 120);
-    if (!name) return fail(400, "Business name is required.");
-    const sector = clean(value?.sector, 80);
-    const website = value?.website_url ? safeUrl(value.website_url) : null;
-    const preview = value?.preview_url ? safeUrl(value.preview_url) : null;
-    if ((value?.website_url && !website) || (value?.preview_url && !preview)) return fail(400, "URLs must start with http:// or https://");
+    const { value: body } = await readBody(req);
+    const { errors, value: v } = validateNewClient(body);
+    if (errors.length) return json({ error: errors[0].message, errors }, 400);
 
-    const slug = `${slugify(name)}-${randomBytes(2).toString("hex")}`;
-    const ingestKey = randomBytes(24).toString("hex");
-    const [row] = await db.sql`
-      INSERT INTO clients (name, slug, sector, website_url, preview_url, ingest_key)
-      VALUES (${name}, ${slug}, ${sector}, ${website}, ${preview}, ${ingestKey})
-      RETURNING id`;
-    for (let i = 0; i < DEFAULT_STEPS.length; i++) {
-      const [title, detail] = DEFAULT_STEPS[i];
-      await db.sql`INSERT INTO build_steps (client_id, position, title, detail) VALUES (${row.id}, ${i + 1}, ${title}, ${detail})`;
+    // Check for clashes up front so we never create half a client
+    const [emailTaken] = await db.sql`SELECT c.name FROM client_users u JOIN clients c ON c.id = u.client_id WHERE u.email = ${v.owner_email}`;
+    if (emailTaken) return json({ error: `${v.owner_email} is already linked to ${emailTaken.name}.`, errors: [{ field: "owner_email", message: `${v.owner_email} is already linked to ${emailTaken.name}.` }] }, 409);
+    for (const [col, field, label] of [["google_customer_id", "google_customer_id", "Google Ads"], ["meta_ad_account_id", "meta_ad_account_id", "Facebook"]]) {
+      if (!v[field]) continue;
+      const [dupe] = col === "google_customer_id"
+        ? await db.sql`SELECT name FROM clients WHERE google_customer_id = ${v[field]}`
+        : await db.sql`SELECT name FROM clients WHERE meta_ad_account_id = ${v[field]}`;
+      if (dupe) return json({ error: `That ${label} account is already used by ${dupe.name}.`, errors: [{ field, message: `That ${label} account is already used by ${dupe.name}.` }] }, 409);
     }
-    return json({ id: row.id }, 201);
+
+    const slug = `${slugify(v.name)}-${randomBytes(2).toString("hex")}`;
+    const ingestKey = randomBytes(24).toString("hex");
+    let id = null;
+    try {
+      const [row] = await db.sql`
+        INSERT INTO clients (name, slug, sector, website_url, ingest_key, price_per_enquiry_pence, google_customer_id, meta_ad_account_id, intake)
+        VALUES (${v.name}, ${slug}, ${v.sector}, ${v.website_url}, ${ingestKey}, ${v.price_per_enquiry_pence}, ${v.google_customer_id}, ${v.meta_ad_account_id},
+                ${JSON.stringify(v.owner_phone ? { contact_phone: v.owner_phone } : {})}::jsonb)
+        RETURNING id`;
+      id = row.id;
+      for (let i = 0; i < DEFAULT_STEPS.length; i++) {
+        const [title, detail] = DEFAULT_STEPS[i];
+        await db.sql`INSERT INTO build_steps (client_id, position, title, detail) VALUES (${id}, ${i + 1}, ${title}, ${detail})`;
+      }
+      await db.sql`INSERT INTO client_users (email, client_id) VALUES (${v.owner_email}, ${id})`;
+    } catch (e) {
+      console.error("create client failed", e);
+      if (id) await db.sql`DELETE FROM clients WHERE id = ${id}`; // cascades, so nothing half-built is left
+      return fail(500, "Something went wrong and nothing was created. Please try again.");
+    }
+
+    // Tracking number: only if we have their phone and automatic buying is switched on. A failure here never blocks the client.
+    let number = null;
+    let numberNote = null;
+    if (v.owner_phone) {
+      if (selfServeReady()) {
+        const r = await provisionNumber(req, db, { id, name: v.name }, v.owner_phone);
+        if (r.ok) number = r.number; else numberNote = r.message;
+      } else {
+        numberNote = "Automatic numbers aren't switched on yet, so add their tracking number by hand.";
+      }
+    }
+    return json({ id, number, numberNote }, 201);
   }
 
   const clientId = p[0] === "clients" ? toInt(p[1], { min: 1 }) : null;
@@ -256,7 +285,52 @@ async function admin(req, db, p, method) {
              COUNT(*) FILTER (WHERE fbc IS NOT NULL OR fbp IS NOT NULL)::int AS with_fb,
              MAX(meta_error) FILTER (WHERE meta_sent_at IS NULL) AS last_meta_error
       FROM leads WHERE client_id = ${clientId} AND status <> 'spam' AND received_at > NOW() - INTERVAL '30 days'`;
-    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv });
+    const [facts] = await db.sql`
+      SELECT EXISTS (SELECT 1 FROM leads WHERE client_id = ${clientId} AND type = 'form' AND (status <> 'spam' OR source = 'Test enquiry')) AS has_lead`;
+    const intakeKeys = Object.keys(client.intake || {}).filter((k) => k !== "contact_phone");
+    const checklist = launchChecklist({
+      hasLogin: users.length > 0,
+      hasNumber: numbers.length > 0,
+      selfServeReady: selfServeReady(),
+      forwardPhone: client.intake?.contact_phone || null,
+      websiteUrl: client.website_url,
+      hasTestOrRealLead: !!facts?.has_lead,
+      hasIntake: intakeKeys.length > 0,
+      googleId: client.google_customer_id, googleLive: connections.google.state === "live",
+      metaId: client.meta_ad_account_id, metaLive: connections.meta.state === "live", metaError: connections.meta.state === "error",
+      metaPixel: client.meta_pixel_id,
+      googleConversionSent: conv.google_sent > 0, metaConversionSent: conv.meta_sent > 0,
+      priceSet: client.price_per_enquiry_pence != null,
+    });
+    const welcome = clientWelcomeMessage({
+      businessName: client.name,
+      portalUrl: (Netlify.env.get("PUBLIC_BASE_URL") || new URL(req.url).origin).replace(/\/$/, ""),
+      googleManagerId: clean(Netlify.env.get("GOOGLE_MCC_ID"), 20),
+      metaBusinessId: clean(Netlify.env.get("META_BUSINESS_ID"), 30),
+    });
+    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv, checklist, welcome, selfServeReady: selfServeReady() });
+  }
+
+  // POST /api/admin/clients/:id/test-enquiry  (proves the website-to-portal link works; never counted or billed)
+  if (clientId && p[2] === "test-enquiry" && p.length === 3 && method === "POST") {
+    const [c] = await db.sql`SELECT id FROM clients WHERE id = ${clientId}`;
+    if (!c) return fail(404, "Business not found.");
+    await db.sql`
+      INSERT INTO leads (client_id, type, name, email, message, source, status)
+      VALUES (${clientId}, 'form', 'Test enquiry', 'test@example.com', 'This is a test enquiry from the admin checklist. It is marked as spam so it is never counted or billed.', 'Test enquiry', 'spam')`;
+    return json({ ok: true }, 201);
+  }
+
+  // POST /api/admin/clients/:id/setup-number  (buy and route their tracking number now)
+  if (clientId && p[2] === "setup-number" && p.length === 3 && method === "POST") {
+    const { value } = await readBody(req);
+    const [c] = await db.sql`SELECT id, name, intake FROM clients WHERE id = ${clientId}`;
+    if (!c) return fail(404, "Business not found.");
+    const phone = normaliseUkPhone(String(value?.phone ?? c.intake?.contact_phone ?? ""));
+    if (!phone) return fail(400, "Enter the client's phone number first, like 07700 900123.");
+    const r = await provisionNumber(req, db, c, phone);
+    if (!r.ok) return fail(r.status, r.message);
+    return json({ ok: true, number: r.number }, 201);
   }
 
   // PATCH /api/admin/clients/:id/accounts  (ad account ids and the call-length rule)
@@ -583,41 +657,44 @@ async function twilioApi(path, { method = "GET", form } = {}) {
   return data;
 }
 
-async function setupPhone(req, db, me) {
-  if (!me.client) return fail(403, "No business is linked to this login yet.");
-  const parsed = await readBody(req);
-  const phone = normaliseUkPhone(String(parsed.value?.phone ?? ""));
-  if (!phone) return fail(400, "Please enter a normal UK landline or mobile number, like 07700 900123.");
-  const clientId = me.client.id;
-
-  // Already set up? Then this just changes where calls are forwarded. No cost.
-  const existing = await db.sql`SELECT id, number FROM tracking_numbers WHERE client_id = ${clientId} AND number LIKE '+%'`;
-  if (existing.length) {
-    await db.sql`UPDATE tracking_numbers SET forward_to = ${phone} WHERE client_id = ${clientId} AND number LIKE '+%'`;
-    return json({ ok: true, changed: true });
-  }
-
-  // Buying a number costs money, so it is switched on deliberately and capped
-  const cfg = {
+// Can we buy numbers automatically right now? (Switched on deliberately, because numbers cost money.)
+function selfServeConfig() {
+  return {
     on: Netlify.env.get("SELF_SERVE_NUMBERS") === "on",
     sid: Netlify.env.get("TWILIO_ACCOUNT_SID"),
     bundle: Netlify.env.get("TWILIO_BUNDLE_SID"),
     address: Netlify.env.get("TWILIO_ADDRESS_SID"),
     max: toInt(Netlify.env.get("SELF_SERVE_MAX_NUMBERS"), { min: 0, max: 1000 }) ?? 20,
   };
-  if (!cfg.on || !cfg.sid || !Netlify.env.get("TWILIO_AUTH_TOKEN") || !cfg.bundle || !cfg.address) {
-    return fail(503, "Automatic setup isn't switched on yet. We'll set your number up for you and let you know.");
+}
+function selfServeReady() {
+  const cfg = selfServeConfig();
+  return !!(cfg.on && cfg.sid && Netlify.env.get("TWILIO_AUTH_TOKEN") && cfg.bundle && cfg.address);
+}
+
+// Gives a business a tracking number that forwards to `phone`. Returns { ok, number, changed } or { status, message }.
+async function provisionNumber(req, db, client, phone) {
+  // Already set up? Then this just changes where calls are forwarded. No cost.
+  const existing = await db.sql`SELECT id, number FROM tracking_numbers WHERE client_id = ${client.id} AND number LIKE '+%'`;
+  if (existing.length) {
+    await db.sql`UPDATE tracking_numbers SET forward_to = ${phone} WHERE client_id = ${client.id} AND number LIKE '+%'`;
+    return { ok: true, changed: true, number: existing[0].number };
+  }
+
+  const cfg = selfServeConfig();
+  if (!selfServeReady()) {
+    return { status: 503, message: "Automatic setup isn't switched on yet. We'll set your number up for you and let you know." };
   }
   const [{ n }] = await db.sql`SELECT COUNT(*)::int AS n FROM tracking_numbers WHERE self_serve`;
-  if (n >= cfg.max) return fail(503, "We'll set your number up for you and let you know.");
+  if (n >= cfg.max) return { status: 503, message: "We'll set your number up for you and let you know." };
 
   // Reserve the slot first, so a double click can't buy two numbers
   await db.sql`DELETE FROM tracking_numbers WHERE self_serve AND number NOT LIKE '+%' AND created_at < NOW() - INTERVAL '5 minutes'`;
   const reserved = await db.sql`
     INSERT INTO tracking_numbers (client_id, number, forward_to, label, self_serve)
-    VALUES (${clientId}, ${"pending:" + clientId}, ${phone}, 'Website and ads', TRUE)
+    VALUES (${client.id}, ${"pending:" + client.id}, ${phone}, 'Website and ads', TRUE)
     ON CONFLICT DO NOTHING RETURNING id`;
-  if (!reserved[0]) return fail(409, "Your number is being set up. Give it a minute and refresh.");
+  if (!reserved[0]) return { status: 409, message: "Your number is being set up. Give it a minute and refresh." };
 
   try {
     const type = Netlify.env.get("TWILIO_NUMBER_TYPE") || "Local";
@@ -630,16 +707,26 @@ async function setupPhone(req, db, me) {
       form: {
         PhoneNumber: candidate, BundleSid: cfg.bundle, AddressSid: cfg.address,
         VoiceUrl: `${base}/api/twilio/voice`, VoiceMethod: "POST",
-        FriendlyName: `${me.client.name}`.slice(0, 60),
+        FriendlyName: `${client.name}`.slice(0, 60),
       },
     });
     await db.sql`UPDATE tracking_numbers SET number = ${bought.phone_number} WHERE id = ${reserved[0].id}`;
-    return json({ ok: true, number: bought.phone_number }, 201);
+    return { ok: true, number: bought.phone_number };
   } catch (e) {
     console.error("self-serve number failed", e);
     await db.sql`DELETE FROM tracking_numbers WHERE id = ${reserved[0].id} AND number NOT LIKE '+%'`;
-    return fail(502, "We couldn't set that up automatically. We've been told and will sort it out for you.");
+    return { status: 502, message: "We couldn't set that up automatically. We've been told and will sort it out for you." };
   }
+}
+
+async function setupPhone(req, db, me) {
+  if (!me.client) return fail(403, "No business is linked to this login yet.");
+  const parsed = await readBody(req);
+  const phone = normaliseUkPhone(String(parsed.value?.phone ?? ""));
+  if (!phone) return fail(400, "Please enter a normal UK landline or mobile number, like 07700 900123.");
+  const r = await provisionNumber(req, db, me.client, phone);
+  if (!r.ok) return fail(r.status, r.message);
+  return r.changed ? json({ ok: true, changed: true }) : json({ ok: true, number: r.number }, 201);
 }
 
 
