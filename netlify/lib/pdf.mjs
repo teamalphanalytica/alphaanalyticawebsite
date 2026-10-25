@@ -85,12 +85,15 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const header = (first) => {
     page = doc.addPage([W, H]);
     if (first) {
-      rect(0, 0, W, 90, MIDNIGHT);
-      page.drawText("Alpha Analytica", { x: M, y: H - 50, size: 20, font: bold, color: WHITE });
-      rect(M, 58, 36, 3, GOLD);
-      page.drawText(pdfSafe(`Proposal for ${name}`), { x: M, y: H - 80, size: 10.5, font: reg, color: MIST });
-      page.drawText(whenText, { x: W - M - reg.widthOfTextAtSize(whenText, 10.5), y: H - 80, size: 10.5, font: reg, color: MIST });
-      y = 90 + 28;
+      rect(0, 0, W, 118, MIDNIGHT);
+      rect(0, 118, W, 3, GOLD);
+      page.drawText("ALPHA ANALYTICA", { x: M, y: H - 36, size: 9.5, font: bold, color: GOLD });
+      page.drawText("Websites and adverts. You pay per genuine enquiry.", { x: W - M - reg.widthOfTextAtSize("Websites and adverts. You pay per genuine enquiry.", 8.5), y: H - 36, size: 8.5, font: reg, color: MIST });
+      rect(M, 46, W - M * 2, 0.6, rgb(0.2, 0.25, 0.4));
+      page.drawText("Proposal for", { x: M, y: H - 70, size: 10, font: reg, color: MIST });
+      page.drawText(clip(name, bold, 24, CW), { x: M, y: H - 96, size: 24, font: bold, color: WHITE });
+      page.drawText(whenText, { x: W - M - reg.widthOfTextAtSize(whenText, 10), y: H - 70, size: 10, font: reg, color: MIST });
+      y = 121 + 26;
     } else {
       rect(0, 0, W, 14, MIDNIGHT);
       y = 14 + 30;
@@ -108,7 +111,8 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const heading = (t) => {
     need(80);
     y += 4;
-    text(t, M, y, 13, bold, MIDNIGHT);
+    rect(M, y + 1, 4, 13, GOLD);
+    text(t, M + 11, y, 13, bold, MIDNIGHT);
     y += 19;
     rect(M, y, CW, 1, RULE);
     y += 12;
@@ -132,6 +136,55 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     page.drawCircle({ x: cx, y: top(ct), size: 6.5, color: GOLD, borderColor: MIDNIGHT, borderWidth: 0.8 });
     page.drawText(String(n), { x: cx - (n > 9 ? 4 : 2.3), y: top(ct) - 3, size: 8, font: bold, color: MIDNIGHT });
   };
+
+
+  const BRING = [
+    ["Pay per genuine enquiry", "No retainer. Spam and wrong numbers are free."],
+    ["Website and adverts together", "We build the site and run the Google and Facebook adverts, so nothing falls between suppliers."],
+    ["Reviewed every week", "Every Monday our AI reads your results and recommends changes. A person checks each one first."],
+    ["Every enquiry traced", "Each advert gets its own phone number and form. You see what brought the work, in a private login."],
+    ["Wasted spend cut", "Adverts that cost money and brought no enquiries are stopped, and the budget moves to those that did."],
+    ["The founder, not an account manager", "We are a small Manchester business. You deal with the person running it."],
+  ];
+  const bringHeight = () => {
+    const gw3 = (CW - 20) / 3;
+    const hs = [0, 1].map((r) => Math.max(...BRING.slice(r * 3, r * 3 + 3).map(([t, d]) => wrap(t, bold, 9.5, gw3 - 22).length * 12 + wrap(d, reg, 8.5, gw3 - 22).length * 11 + 22)));
+    return { gw3, hs, total: 36 + hs[0] + hs[1] + 10 };
+  };
+  const drawBring = () => {
+    heading("What Alpha Analytica brings");
+    const { gw3, hs } = bringHeight();
+    BRING.forEach(([t, d], i) => {
+      const r = Math.floor(i / 3), c = i % 3;
+      const x = M + c * (gw3 + 10), yy = y + (r ? hs[0] + 8 : 0);
+      rect(x, yy, gw3, hs[r], TINT);
+      rect(x, yy, gw3, 3, GOLD);
+      const th = textIn(t, x + 11, yy + 11, gw3 - 22, 9.5, bold, MIDNIGHT, 1.25);
+      textIn(d, x + 11, yy + 13 + th, gw3 - 22, 8.5, reg, SLATE, 1.3);
+    });
+    y += hs[0] + hs[1] + 18;
+  };
+  const BRING_SHORT = [
+    "No retainer. Spam and wrong numbers are free.",
+    "We build the site and run the adverts.",
+    "A person checks every change AI recommends.",
+    "Each advert has its own number and form.",
+    "Budget moves from adverts that brought nothing.",
+    "A small Manchester team. You deal with the founder.",
+  ];
+  const drawBringCompact = () => {
+    heading("What Alpha Analytica brings");
+    const hw = (CW - 14) / 2;
+    BRING.forEach(([t], i) => {
+      const x = M + (i % 2) * (hw + 14), yy = y + Math.floor(i / 3 * 0) + (i >> 1) * 30;
+      rect(x, yy, hw, 26, TINT);
+      rect(x, yy, 3, 26, GOLD);
+      text(clip(t, bold, 9.5, hw - 18), x + 11, yy + 4, 9.5, bold, MIDNIGHT);
+      text(clip(BRING_SHORT[i], reg, 8, hw - 18), x + 11, yy + 16, 8, reg, SLATE);
+    });
+    y += 3 * 30 + 6;
+  };
+  let bringOnPage1 = false;
 
   /* ---------------- page 1: where you stand ---------------- */
   header(true);
@@ -200,9 +253,13 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     para(f.detail, { indent: 12, color: SLATE, gap: 8 });
   }
 
+  if (y + bringHeight().total + 6 < H - 52) { drawBring(); bringOnPage1 = true; }
+  else if (y + 35 + 96 < H - 52) { drawBringCompact(); bringOnPage1 = true; }
+
   /* ---------------- page 2: the new website ---------------- */
   header(false);
-  text("What your new website could look like", M, y, 13, bold, MIDNIGHT);
+  rect(M, y + 1, 4, 13, GOLD);
+  text("What your new website could look like", M + 11, y, 13, bold, MIDNIGHT);
   y += 19;
   rect(M, y, CW, 1, RULE);
   y += 8;
@@ -320,7 +377,8 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
 
   /* ---------------- page 3: benefits and value ---------------- */
   header(false);
-  text("What you get", M, y, 13, bold, MIDNIGHT);
+  rect(M, y + 1, 4, 13, GOLD);
+  text("What you get", M + 11, y, 13, bold, MIDNIGHT);
   y += 19;
   rect(M, y, CW, 1, RULE);
   y += 10;
@@ -354,29 +412,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     y += 88;
   }
 
-  heading("About us");
-  const why = [
-    ["You deal with the founder", "We are a small Manchester business. You speak to the person running it, not an account manager."],
-    ["Results reviewed every week", "Every Monday our AI reads your last seven days of spend, enquiries, spam and campaign results. It recommends changes, and a person checks each one before it is made."],
-    ["Wasted spend gets cut", "Each week we look for adverts that cost money and brought no enquiries, and move that budget to the ones that did."],
-    ["A private login", "It shows every enquiry and call, and where each one came from."],
-  ];
-  const gw = (CW - 12) / 2;
-  for (let r = 0; r < 2; r++) {
-    const pair = why.slice(r * 2, r * 2 + 2);
-    const hs = pair.map(([t, d]) => wrap(t, bold, 9.5, gw - 22).length * 12 + wrap(d, reg, 8.5, gw - 22).length * 11.2 + 16);
-    const h = Math.max(...hs);
-    need(h + 8);
-    pair.forEach(([t, d], i) => {
-      const x = M + i * (gw + 12);
-      rect(x, y, gw, h, TINT);
-      rect(x, y, 3, h, GOLD);
-      const th = textIn(t, x + 12, y + 7, gw - 22, 9.5, bold, INK, 1.25);
-      textIn(d, x + 12, y + 9 + th, gw - 22, 8.5, reg, SLATE, 1.3);
-    });
-    y += h + 8;
-  }
-  y += 2;
+  if (!bringOnPage1) drawBringCompact();
 
   heading("What it costs, and what happens next");
   para(pr.offer, { gap: 6 });
@@ -392,10 +428,20 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     text(d, M + 22, y + 12, 9, reg, SLATE);
     y += 26;
   });
-  if (contact) para(contact, { font: bold, gap: 2 });
+  if (contact) {
+    y += 4;
+    const ch = 40;
+    need(ch + 6);
+    rect(M, y, CW, ch, MIDNIGHT);
+    rect(M, y, 4, ch, GOLD);
+    text("Want to talk it through?", M + 16, y + 8, 10.5, bold, GOLD);
+    text(clip(contact, reg, 10, CW - 32), M + 16, y + 23, 10, reg, WHITE);
+    y += ch + 4;
+  }
 
   const pages = doc.getPages();
   pages.forEach((pg, i) => {
+    pg.drawRectangle({ x: M, y: 44, width: CW, height: 0.6, color: RULE });
     pg.drawText(pdfSafe(`Based on a public look at ${website || "your online presence"} on ${date.toLocaleDateString("en-GB")}. Alpha Analytica, Manchester.   Page ${i + 1} of ${pages.length}`), { x: M, y: 28, size: 8, font: reg, color: SLATE });
   });
   doc.setTitle(pdfSafe(`Proposal for ${name}`));
