@@ -242,3 +242,26 @@ table.health td{vertical-align:top}
   .chart{break-inside:avoid;background:#F3F5F9}
   .tile{break-inside:avoid}
 }
+
+/* Prospects */
+.prospect{border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;margin-top:14px;background:var(--surface)}
+.prospect-head{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+.prospect-head h3{font-size:1.1rem;margin:0}
+.prospect-tags{display:flex;gap:6px;flex-wrap:wrap}
+.prospect-contact{margin:10px 0 4px}
+.prospect-issues{margin:8px 0 0;padding-left:18px}
+.prospect-issues li{margin:4px 0}
+.prospect-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 4px}
+.prospect-actions select{min-height:36px;padding:0 10px}
+.prospect-script{background:#F5F6FB;border-radius:var(--r);padding:14px 16px;margin:12px 0}
+.prospect-script h4{margin:12px 0 4px;font-size:.92rem}
+.prospect-script ul{margin:4px 0;padding-left:18px}
+.prospect-notes{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;margin-top:12px}
+.prospect-notes input{min-height:38px}
+.prospect-filter{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.prospect-rules{margin:12px 0}
+.prospect-rules ul{margin:8px 0 0;padding-left:18px}
+@media (max-width:560px){.prospect-notes{grid-template-columns:1fr}}
+.prospect-actions select,.prospect-filter select{width:auto;min-width:0}
+.prospect-contact a{color:var(--ink)}
+.prospect-contact a:hover{color:var(--amber-deep,var(--ink))}

@@ -18,6 +18,9 @@ const state = {
   attention: null,
   billing: null, // { month, rows }
   adminView: "overview", // overview | enquiries | calls | performance | clients | billing
+  prospects: null, // admin prospecting list
+  prospectOpen: new Set(), // which prospect scripts are open
+  prospectFilter: "active",
   ov: null, // admin overview data
   feed: { leads: null, more: false, filters: {} }, // admin enquiry feed
   callsList: { calls: null, more: false, filters: {} }, // admin call list
@@ -618,7 +621,7 @@ function invoicesPanel() {
   </div>`;
 }
 
-const ADMIN_VIEWS = [["overview", "Overview"], ["enquiries", "Enquiries"], ["calls", "Calls"], ["performance", "What's working"], ["clients", "Clients"], ["billing", "Billing"]];
+const ADMIN_VIEWS = [["overview", "Overview"], ["enquiries", "Enquiries"], ["calls", "Calls"], ["performance", "What's working"], ["prospects", "Prospects"], ["clients", "Clients"], ["billing", "Billing"]];
 
 function ago(ts) {
   if (!ts) return "never";
@@ -832,6 +835,105 @@ function viewAdminPerformance() {
     ${p.call_outcomes.length ? `<div class="panel"><h2>What callers wanted</h2><ul class="checks launch">${p.call_outcomes.map((o) => `<li><span class="chip ${OUTCOME_CLASS[o.outcome] || ""}">${esc(OUTCOME_TEXT[o.outcome] || "Other")}</span> ${o.n} call${o.n === 1 ? "" : "s"}</li>`).join("")}</ul></div>` : ""}`;
 }
 
+const PROSPECT_STATUS_TEXT = { new: "New", to_call: "To call", contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", skip: "Not for us" };
+const PROSPECT_ACTIVE = ["new", "to_call", "contacted", "replied"];
+
+const ukPhone = (n) => (n && n.startsWith("+44") ? "0" + n.slice(3) : n || "");
+
+function scoreChip(score) {
+  if (score === null || score === undefined) return "";
+  const cls = score <= 40 ? "spam" : score <= 70 ? "doing" : "done";
+  return `<span class="chip ${cls}" title="Lower means more we can help with">Website ${score}/100</span>`;
+}
+
+function prospectCard(pr) {
+  const open = state.prospectOpen.has(String(pr.id));
+  const issues = (pr.audit && pr.audit.issues ? pr.audit.issues : []).slice(0, 3);
+  const c = pr.proposition && pr.proposition.call;
+  const site = safeHref(pr.website);
+  const entityHint = pr.entity_type === "company" ? "Limited companies can be emailed at a business address, if you say who you are and how to opt out."
+    : "Not sure it's a limited company? Check Companies House. Sole traders and partnerships count as individuals: phone only if they aren't on the TPS, and email only with their permission.";
+  return `<article class="prospect ${open ? "open" : ""}">
+    <div class="prospect-head">
+      <div><h3>${esc(pr.name)}</h3>
+        <p class="muted small">${esc(pr.niche || "")}${pr.address ? " · " + esc(pr.address) : ""}${pr.source === "manual" ? " · added by you" : ""}</p></div>
+      <div class="prospect-tags">${scoreChip(pr.score)}<span class="chip ${pr.status === "won" ? "done" : pr.status === "new" ? "new" : ""}">${esc(PROSPECT_STATUS_TEXT[pr.status] || pr.status)}</span></div>
+    </div>
+    <p class="prospect-contact">${pr.phone ? `<a href="tel:${esc(pr.phone)}"><b>${esc(ukPhone(pr.phone))}</b></a>` : `<span class="muted">No phone number found</span>`}
+      ${site ? ` · <a href="${site}" target="_blank" rel="noopener noreferrer">${esc(pr.website.replace(/^https?:\/\//, ""))}</a>` : ` · <span class="muted">no website found</span>`}</p>
+    ${issues.length ? `<ul class="prospect-issues">${issues.map((i) => `<li><b>${esc(i.title)}</b> <span class="muted">${esc(i.detail)}</span></li>`).join("")}</ul>` : ""}
+    <div class="prospect-actions">
+      <a class="btn btn-primary btn-small" href="/api/admin/prospects/${Number(pr.id)}/pdf" target="_blank" rel="noopener">Open proposal PDF</a>
+      <button class="btn btn-ghost btn-small" data-action="prospect-toggle" data-id="${pr.id}" type="button" aria-expanded="${open}">${open ? "Hide" : "Show"} call script</button>
+      <button class="btn btn-ghost btn-small" data-action="prospect-rewrite" data-id="${pr.id}" type="button">Rewrite proposal</button>
+      <label class="sr-only" for="ps${pr.id}">Status</label>
+      <select id="ps${pr.id}" data-action="prospect-status" data-id="${pr.id}">${Object.entries(PROSPECT_STATUS_TEXT).map(([v, t]) => `<option value="${v}" ${pr.status === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+      <label class="sr-only" for="pe${pr.id}">Business type</label>
+      <select id="pe${pr.id}" data-action="prospect-entity" data-id="${pr.id}">
+        <option value="unknown" ${pr.entity_type === "unknown" ? "selected" : ""}>Type not checked</option>
+        <option value="company" ${pr.entity_type === "company" ? "selected" : ""}>Limited company</option>
+        <option value="sole_trader" ${pr.entity_type === "sole_trader" ? "selected" : ""}>Sole trader / partnership</option></select>
+    </div>
+    ${open && c ? `<div class="prospect-script">
+      <p class="muted small">${esc(entityHint)}</p>
+      <h4>Opening line</h4><p>${esc(c.opener)}</p>
+      ${c.why_now ? `<h4>Why now</h4><p>${esc(c.why_now)}</p>` : ""}
+      ${c.questions && c.questions.length ? `<h4>Ask</h4><ul>${c.questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}
+      ${c.objections && c.objections.length ? `<h4>If they say</h4><ul>${c.objections.map((o) => `<li><b>${esc(o.q)}</b><br>${esc(o.a)}</li>`).join("")}</ul>` : ""}
+      ${pr.proposition.cover_note ? `<h4>Message to send with the PDF</h4><textarea id="cn${pr.id}" class="code-area" readonly rows="4">${esc(pr.proposition.cover_note)}</textarea>
+        <p><button class="btn btn-ghost btn-small" data-action="prospect-copy" data-id="${pr.id}" type="button">Copy message</button></p>` : ""}
+      <p class="muted small">Written ${pr.proposition_by === "claude" ? "by Claude from what we saw on their website" : "from a template (add the Anthropic key for richer, tailored proposals)"}.</p>
+    </div>` : ""}
+    <form class="prospect-notes" data-form="prospect-notes" data-id="${pr.id}">
+      <label class="sr-only" for="pn${pr.id}">Notes</label>
+      <input id="pn${pr.id}" name="notes" type="text" maxlength="2000" value="${esc(pr.notes || "")}" placeholder="Notes: who you spoke to, what they said">
+      <label class="sr-only" for="pf${pr.id}">Follow up on</label>
+      <input id="pf${pr.id}" name="follow_up_on" type="date" value="${pr.follow_up_on ? esc(String(pr.follow_up_on).slice(0, 10)) : ""}" title="Follow up on">
+      <button class="btn btn-ghost btn-small" type="submit">Save</button>
+    </form>
+  </article>`;
+}
+
+function viewAdminProspects() {
+  const d = state.prospects;
+  if (!d) return `<p class="loading">Loading…</p>`;
+  const f = state.prospectFilter;
+  const list = d.prospects.filter((p) => (f === "all" ? true : f === "active" ? PROSPECT_ACTIVE.includes(p.status) : f === "won" ? p.status === "won" : ["lost", "skip"].includes(p.status)));
+  const today = new Date().toISOString().slice(0, 10);
+  const newToday = d.prospects.filter((p) => String(p.batch_date).slice(0, 10) === today).length;
+  const due = d.prospects.filter((p) => p.follow_up_on && String(p.follow_up_on).slice(0, 10) <= today && PROSPECT_ACTIVE.includes(p.status)).length;
+  return `<div class="panel"><h2>Manchester prospects</h2>
+      <p class="muted">Every weekday morning we pick a trade (today's trade is <b>${esc(d.today)}</b>), find ${d.perDay} Greater Manchester businesses, look at their website the way a customer would, and write a proposal and call script for each. Nothing is ever sent to them. You decide who to ring.</p>
+      <div class="tiles">
+        <div class="tile"><div class="l">New today</div><div class="n">${newToday}</div></div>
+        <div class="tile"><div class="l">Follow-ups due</div><div class="n">${due}</div></div>
+        <div class="tile"><div class="l">Won</div><div class="n">${d.prospects.filter((p) => p.status === "won").length}</div></div>
+      </div>
+      <p><button class="btn btn-primary" data-action="run-job" data-job="prospects" type="button">Find today's businesses now</button>
+        <span class="muted small">Takes about 20 seconds. Safe to press again: it never repeats a business.</span></p>
+      <details class="prospect-rules"><summary>Before you ring or email anyone</summary>
+        <ul>
+          <li>Check the number isn't on the TPS (individuals) or CTPS (companies) do-not-call list at tpsonline.org.uk before a cold call.</li>
+          <li>Limited companies can be emailed at a business address if you say who you are and give a clear way to opt out. Sole traders and partnerships can't be emailed cold, only called.</li>
+          <li>If anyone says no, set them to "Not for us" and never contact them again.</li>
+          <li>This isn't legal advice. The ICO's guide to direct marketing is the reference.</li>
+        </ul></details>
+      <details><summary>Add a business you found yourself</summary>
+        <form class="form" data-form="prospect-add">
+          <div class="field"><label for="pa-name">Business name</label><input id="pa-name" name="name" required maxlength="120"></div>
+          <div class="field"><label for="pa-site">Website</label><input id="pa-site" name="website" placeholder="e.g. smithroofing.co.uk"></div>
+          <div class="field"><label for="pa-phone">Phone</label><input id="pa-phone" name="phone" inputmode="tel" placeholder="0161 000 0000"></div>
+          <div class="field"><label for="pa-niche">Trade</label><select id="pa-niche" name="niche">${d.niches.map((n) => `<option>${esc(n)}</option>`).join("")}<option>Other</option></select></div>
+          <button class="btn btn-primary" type="submit">Add and write proposal</button>
+        </form></details>
+    </div>
+    <div class="panel"><div class="prospect-filter"><h2>Prospects</h2>
+      <label class="sr-only" for="pfilter">Show</label>
+      <select id="pfilter" data-action="prospect-filter"><option value="active" ${f === "active" ? "selected" : ""}>In progress</option><option value="won" ${f === "won" ? "selected" : ""}>Won</option><option value="closed" ${f === "closed" ? "selected" : ""}>Lost or not for us</option><option value="all" ${f === "all" ? "selected" : ""}>Everything</option></select></div>
+      ${list.length ? list.map(prospectCard).join("") : `<p class="muted">${d.prospects.length ? "Nothing here." : "Nothing yet. Press the button above, or wait for tomorrow morning's run."}</p>`}
+      <p class="muted small">Business details from OpenStreetMap contributors (openstreetmap.org/copyright). Lower website scores mean more we can help with.</p></div>`;
+}
+
 function viewAdmin() {
   if (state.adminDetail) return viewAdminClient();
   const list = state.adminClients;
@@ -841,6 +943,7 @@ function viewAdmin() {
   else if (state.adminView === "enquiries") body = viewAdminFeed();
   else if (state.adminView === "calls") body = viewAdminCalls();
   else if (state.adminView === "performance") body = viewAdminPerformance();
+  else if (state.adminView === "prospects") body = viewAdminProspects();
   else if (state.adminView === "billing") body = `${billingPanel()}${invoicesPanel()}`;
   else body = `<div class="panel"><h2>Clients</h2>
       ${list === null ? `<p class="muted">Loading…</p>` : list.length
@@ -1080,6 +1183,7 @@ async function loadAdminList() {
   if (view === "enquiries") await loadFeed(false);
   if (view === "calls") await loadCalls(false);
   if (view === "performance") state.perf = await api("/admin/performance");
+  if (view === "prospects") state.prospects = await api("/admin/prospects");
 }
 
 async function loadFeed(append) {
@@ -1144,6 +1248,10 @@ app.addEventListener("click", (e) => {
         const held = r.held.length ? ` Waiting: ${r.held.map((h) => `${h.client} (${h.reason})`).join("; ")}.` : "";
         const failed = r.failed.length ? ` Problems: ${r.failed.map((f) => `${f.client} (${f.error})`).join("; ")}.` : "";
         return flash(r.failed.length ? "err" : "ok", `${r.period}: ${r.drafts} draft${r.drafts === 1 ? "" : "s"}, ${r.created} sent, ${r.skipped} with nothing to bill.${held}${failed}`);
+      }
+      if (el.dataset.job === "prospects") {
+        if (r.error) return flash("err", r.error);
+        return flash("ok", `${r.niche}: looked at ${r.examined} of ${r.candidates} businesses and added ${r.added} new prospect${r.added === 1 ? "" : "s"}.${r.added ? "" : " Nothing new worth a call right now. Try again tomorrow."}`);
       }
       if (el.dataset.job === "attention-email") {
         return flash(r.sent ? "ok" : "err", r.sent ? "Sent. Check your inbox." : `Not sent: ${r.reason || r.error || "email isn't set up yet"}.`);
@@ -1264,6 +1372,27 @@ app.addEventListener("click", (e) => {
     });
   }
 
+  if (a === "prospect-toggle") {
+    const id = String(el.dataset.id);
+    if (state.prospectOpen.has(id)) state.prospectOpen.delete(id); else state.prospectOpen.add(id);
+    return render();
+  }
+  if (a === "prospect-rewrite") {
+    return attempt(async () => {
+      const r = await api(`/admin/prospects/${el.dataset.id}/proposition`, { method: "POST", body: {} });
+      state.prospects = await api("/admin/prospects");
+      flash("ok", r.by === "claude" ? "Rewritten by Claude." : "Rewritten from the template. Add the Anthropic key to have Claude write it.");
+    });
+  }
+  if (a === "prospect-copy") {
+    const box = document.getElementById(`cn${el.dataset.id}`);
+    if (!box) return;
+    const ok = () => { flash("ok", "Copied."); render(); };
+    const fallback = () => { box.focus(); box.select(); flash("err", "Press Ctrl+C (or Cmd+C) to copy the selected message."); render(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(box.value).then(ok, fallback); else fallback();
+    return;
+  }
+
   if (a === "copy-welcome") {
     const box = document.getElementById("welcome");
     if (!box) return;
@@ -1302,6 +1431,18 @@ app.addEventListener("change", (e) => {
       flash("ok", "Saved.");
     });
   }
+  if (el.dataset.action === "prospect-status" || el.dataset.action === "prospect-entity") {
+    const body = el.dataset.action === "prospect-status" ? { status: el.value } : { entity_type: el.value };
+    attempt(async () => {
+      await api(`/admin/prospects/${id}`, { method: "PATCH", body });
+      state.prospects = await api("/admin/prospects");
+      flash("ok", "Saved.");
+    });
+  }
+  if (el.dataset.action === "prospect-filter") {
+    state.prospectFilter = el.value;
+    render();
+  }
   if (el.dataset.action === "admin-lead-status") {
     attempt(async () => {
       await api(`/leads/${id}`, { method: "PATCH", body: { status: el.value } });
@@ -1336,6 +1477,22 @@ app.addEventListener("submit", (e) => {
   const id = form.dataset.id;
 
   switch (form.dataset.form) {
+    case "prospect-add":
+      return attempt(async () => {
+        const r = await api("/admin/prospects", { method: "POST", body: { name: f.name, website: f.website, phone: f.phone, niche: f.niche } });
+        state.prospects = await api("/admin/prospects");
+        state.prospectOpen.add(String(r.id));
+        state.prospectFilter = "active";
+        flash("ok", "Added. The proposal is ready to open.");
+      });
+
+    case "prospect-notes":
+      return attempt(async () => {
+        await api(`/admin/prospects/${id}`, { method: "PATCH", body: { notes: f.notes || "", follow_up_on: f.follow_up_on || "" } });
+        state.prospects = await api("/admin/prospects");
+        flash("ok", "Saved.");
+      });
+
     case "login":
       return attempt(async () => {
         try {

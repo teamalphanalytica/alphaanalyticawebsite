@@ -121,3 +121,7 @@ Check the first real call: in the transcript "Caller" is the person who rang and
 
 ## Claude Ads (paid-media audits and plans)
 `.claude/settings.json` adds the open-source [Claude Ads](https://github.com/AgriciDaniel/claude-ads) plugin (MIT) to this project. When you open the project in Claude Code it asks you to trust the project and then installs the plugin. Use it with prompts like "audit this client's Google Ads setup" or `/claude-ads:ads audit google`. It is read-only by default; keep it that way for client accounts unless you have approved a specific change.
+
+## Finding your own clients
+
+Admin, then Prospects finds Manchester businesses every weekday and writes a proposal PDF and call script for each. See [PROSPECTING.md](PROSPECTING.md).
