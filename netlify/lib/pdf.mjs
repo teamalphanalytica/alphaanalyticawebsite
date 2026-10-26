@@ -223,7 +223,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const p1Need = (() => {
     const fh = (pr.findings || []).reduce((a, f) => a + wrap(f.title, bold, 10.5, CW - 12).length * 14.2 + 1 + wrap(f.detail, reg, 10.5, CW - 12).length * 14.2 + 8, 0);
     const rk = (rankings || []).some((r) => r.bucket && r.bucket !== "unknown") ? 170 : 0;
-    return 42 + 35 + Math.ceil(scoreRows(audit).length / 2) * 24 + 20 + rk + 35 + fh;
+    return 42 + 35 + Math.ceil(scoreRows(audit).filter((r) => r[1] === false).length / 2) * 24 + 20 + rk + 35 + fh;
   })();
   const valueOnPage1 = y + 130 + p1Need < H - 62;
   if (valueOnPage1) drawValue();
@@ -235,18 +235,20 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     y += ph2 + 8;
   }
 
-  heading("How your website is doing today");
-  const rows = scoreRows(audit);
-  const colW = CW / 2;
-  rows.forEach((r, i) => {
-    const cx = M + (i % 2) * colW;
-    const ct = y + Math.floor(i / 2) * 24;
-    rect(cx, ct + 18, colW - 14, 0.6, RULE);
-    tick(cx + 14, ct + 7.5, r[1]);
-    text(r[0], cx + 28, ct + 3, 10, reg, INK);
-  });
-  y += Math.ceil(rows.length / 2) * 24 + 2;
-  para("Green is something we saw working, red is something we could not find, grey means we couldn't tell from a public look.", { size: 8.5, color: SLATE, gap: 6 });
+  const missing = scoreRows(audit).filter((r) => r[1] === false);
+  if (missing.length) {
+    heading("What your website is missing");
+    const colW = CW / 2;
+    missing.forEach((r, i) => {
+      const cx = M + (i % 2) * colW;
+      const ct = y + Math.floor(i / 2) * 24;
+      rect(cx, ct + 18, colW - 14, 0.6, RULE);
+      tick(cx + 14, ct + 7.5, false);
+      text(r[0], cx + 28, ct + 3, 10, reg, INK);
+    });
+    y += Math.ceil(missing.length / 2) * 24 + 2;
+    para("Things we could not find on a public look at your website.", { size: 8.5, color: SLATE, gap: 6 });
+  }
 
   const ranked = (rankings || []).filter((r) => r.bucket && r.bucket !== "unknown").slice(0, 3);
   if (ranked.length) {
