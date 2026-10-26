@@ -20,6 +20,10 @@ import { stripeOn, billingMode, disputeDays, createPaymentSetup, runBilling, app
 import { sendEmail } from "../lib/email.mjs";
 import { recordingOn, recordingNotice, retentionDays, handleRecordingCallback, startTranscript, summariseCall, fetchRecording } from "../lib/calls.mjs";
 import { overviewData, performanceData, feedData, callsData, callDetail } from "../lib/admin-data.mjs";
+import { cleanRankings, checkRankings, searchesFor, googleSearchUrl, ensureRich, adLinks, findProspects, polishTemplates, addProspect, buildProposition, nicheFor, pickNiche, PROSPECT_STATUSES, NICHES } from "../lib/prospects.mjs";
+import { runWeeklyReviews, reviewClient } from "../lib/ad-review.mjs";
+import { addDays, mondayOf } from "../lib/util.mjs";
+import { buildProposalPdf } from "../lib/pdf.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
@@ -346,7 +350,8 @@ async function admin(req, db, p, method) {
       googleManagerId: clean(Netlify.env.get("GOOGLE_MCC_ID"), 20),
       metaBusinessId: clean(Netlify.env.get("META_BUSINESS_ID"), 30),
     });
-    return json({ client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv, checklist, welcome, selfServeReady: selfServeReady() });
+    const [adReview] = await db.sql`SELECT week_start, review, created_at FROM ad_reviews WHERE client_id = ${clientId} ORDER BY week_start DESC LIMIT 1`;
+    return json({ adReview: adReview || null, client, users: users.map((u) => u.email), numbers, drafts, connections, conversions: conv, checklist, welcome, selfServeReady: selfServeReady() });
   }
 
   // POST /api/admin/clients/:id/test-enquiry  (proves the website-to-portal link works; never counted or billed)
@@ -572,6 +577,101 @@ async function admin(req, db, p, method) {
       ? await db.sql`UPDATE leads SET dispute_state = 'accepted', status = 'spam' WHERE id = ${leadId} AND dispute_state = 'open' RETURNING id`
       : await db.sql`UPDATE leads SET dispute_state = 'rejected' WHERE id = ${leadId} AND dispute_state = 'open' RETURNING id`;
     if (!done[0]) return fail(409, "That dispute has already been decided.");
+    return json({ ok: true });
+  }
+
+  // GET /api/admin/prospects  (today's batch and everything before it)
+  if (p[0] === "prospects" && p.length === 1 && method === "GET") {
+    const rows = await db.sql`
+      SELECT id, name, niche, address, phone, website, source, entity_type, ads_google, ads_meta, rankings, status, notes, score, audit, proposition, proposition_by, batch_date, found_at, contacted_at, follow_up_on
+      FROM prospects ORDER BY batch_date DESC, score ASC NULLS LAST, id DESC LIMIT 200`;
+    for (const r of rows) {
+      r.ad_links = adLinks(r);
+      r.searches = searchesFor(r, nicheFor(r.niche)).map((q) => ({ query: q, url: googleSearchUrl(q) }));
+    }
+    return json({ prospects: rows, today: pickNiche().label, perDay: Number(Netlify.env.get("PROSPECTS_PER_DAY")) || 5, claude: !!Netlify.env.get("ANTHROPIC_API_KEY"), serp: !!Netlify.env.get("SERPAPI_KEY"), niches: NICHES.map((n) => n.label) });
+  }
+
+  // POST /api/admin/prospects  (add one by hand: name, website and/or phone)
+  if (p[0] === "prospects" && p.length === 1 && method === "POST") {
+    const { value } = await readBody(req);
+    const r = await addProspect(db, value);
+    return r.error ? fail(400, r.error) : json({ ok: true, id: r.id }, 201);
+  }
+
+  // POST /api/admin/run/prospects  ("Find today's businesses now")
+  if (p[0] === "run" && p[1] === "prospects" && p.length === 2 && method === "POST") {
+    return json(await findProspects(db));
+  }
+
+  // PATCH /api/admin/prospects/:id  (status, notes, company type, follow-up date)
+  if (p[0] === "prospects" && p.length === 2 && method === "PATCH") {
+    const id = toInt(p[1], { min: 1 });
+    const b = (await readBody(req)).value || {};
+    const status = b.status === undefined ? null : PROSPECT_STATUSES.includes(b.status) ? b.status : false;
+    const entity = b.entity_type === undefined ? null : ["unknown", "company", "sole_trader"].includes(b.entity_type) ? b.entity_type : false;
+    const followUp = b.follow_up_on === undefined ? undefined : b.follow_up_on === "" ? null : isDay(b.follow_up_on) ? b.follow_up_on : false;
+    const adVal = (v) => (v === undefined ? null : ["unknown", "yes", "no"].includes(v) ? v : false);
+    const adsG = adVal(b.ads_google), adsM = adVal(b.ads_meta);
+    const ranks = b.rankings === undefined ? null : JSON.stringify(cleanRankings(b.rankings));
+    if (status === false || entity === false || followUp === false || adsG === false || adsM === false) return fail(400, "That value isn't allowed.");
+    const notes = b.notes === undefined ? null : String(b.notes).slice(0, 2000);
+    const hasFollow = followUp !== undefined;
+    const [row] = await db.sql`
+      UPDATE prospects SET
+        status = COALESCE(${status}::text, status),
+        entity_type = COALESCE(${entity}::text, entity_type),
+        notes = COALESCE(${notes}::text, notes),
+        ads_google = COALESCE(${adsG}::text, ads_google),
+        ads_meta = COALESCE(${adsM}::text, ads_meta),
+        rankings = COALESCE(${ranks}::jsonb, rankings),
+        follow_up_on = CASE WHEN ${hasFollow} THEN ${hasFollow ? followUp : null}::date ELSE follow_up_on END,
+        contacted_at = CASE WHEN ${status}::text IN ('contacted','replied') AND contacted_at IS NULL THEN NOW() ELSE contacted_at END
+      WHERE id = ${id} RETURNING id`;
+    return row ? json({ ok: true }) : fail(404, "Not found.");
+  }
+
+  // POST /api/admin/prospects/:id/rankings/check  (look up where they show on Google, needs SERPAPI_KEY)
+  if (p[0] === "prospects" && p.length === 4 && p[2] === "rankings" && p[3] === "check" && method === "POST") {
+    const [row] = await db.sql`SELECT id, name, niche, address, website, audit FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
+    if (!row) return fail(404, "Not found.");
+    const r = await checkRankings(row, searchesFor(row, nicheFor(row.niche)));
+    if (r.skipped) return json({ ok: false, reason: "Add a SERPAPI_KEY in Netlify to check automatically, or use the Google links and record what you see." });
+    if (r.error) return fail(502, "The Google check didn't finish: " + r.error);
+    await db.sql`UPDATE prospects SET rankings = ${JSON.stringify(r.rankings)}::jsonb WHERE id = ${row.id}`;
+    return json({ ok: true });
+  }
+
+  // POST /api/admin/prospects/:id/proposition  (write the proposal again, with Claude when a key is set)
+  if (p[0] === "prospects" && p.length === 3 && p[2] === "proposition" && method === "POST") {
+    const [row] = await db.sql`SELECT id, name, niche, website, audit, ads_google, ads_meta, rankings FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
+    if (!row) return fail(404, "Not found.");
+    const { proposition, by } = await buildProposition(row, row.audit, nicheFor(row.niche) || { label: row.niche, job: "new enquiries" });
+    await db.sql`UPDATE prospects SET proposition = ${JSON.stringify(proposition)}::jsonb, proposition_by = ${by} WHERE id = ${row.id}`;
+    return json({ ok: true, by });
+  }
+
+  // GET /api/admin/prospects/:id/pdf  (the proposal as a PDF to send)
+  if (p[0] === "prospects" && p.length === 3 && p[2] === "pdf" && method === "GET") {
+    const [row] = await db.sql`SELECT name, website, niche, phone, audit, rankings, proposition FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
+    if (!row?.proposition) return fail(404, "Not found.");
+    const niche = nicheFor(row.niche) || { label: row.niche, job: "new enquiries" };
+    const bytes = await buildProposalPdf({ name: row.name, website: row.website, audit: row.audit, rankings: row.rankings, phone: row.phone ? (row.phone.startsWith("+44") ? "0" + row.phone.slice(3) : row.phone) : "", proposition: ensureRich(row.proposition, row, row.audit, niche), contact: Netlify.env.get("PROPOSAL_CONTACT") || "" });
+    const file = "proposal-" + (slugify(row.name) || "business") + ".pdf";
+    return new Response(bytes, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${file}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+  }
+
+  // POST /api/admin/run/ad-review  (review every client's advertising for last week now)
+  if (p[0] === "run" && p[1] === "ad-review" && p.length === 2 && method === "POST") {
+    return json(await runWeeklyReviews(db, { force: true }));
+  }
+
+  // POST /api/admin/clients/:id/review  (review this client's advertising for last week now)
+  if (clientId && p[2] === "review" && p.length === 3 && method === "POST") {
+    const weekStart = addDays(mondayOf(new Date().toISOString().slice(0, 10)), -7);
+    const r = await reviewClient(db, clientId, weekStart);
+    if (r.skipped) return json({ ok: false, reason: r.skipped === "no ANTHROPIC_API_KEY" ? "Add the Anthropic key in Netlify first." : "There's nothing to review yet: no ad results or enquiries last week." });
+    if (r.error) return fail(502, "The review didn't finish: " + r.error);
     return json({ ok: true });
   }
 

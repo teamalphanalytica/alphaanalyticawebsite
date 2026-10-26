@@ -9,4 +9,4 @@ for f in netlify/database/migrations/*.sql; do psql -h "$PGHOST" -p "$PGPORT" -U
 PGHOST=/path/to/socket/dir PGPORT=5499 npm run test:db
 ```
 
-They empty the `clients` and `call_clicks` tables, so never point them at a real database.
+They empty the `clients`, `call_clicks` and `prospects` tables, so never point them at a real database.
