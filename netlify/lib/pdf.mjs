@@ -89,7 +89,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
       rect(0, 0, W, 118, MIDNIGHT);
       rect(0, 118, W, 3, GOLD);
       page.drawText("Alpha Analytica", { x: M, y: H - 38, size: 12, font: serif, color: GOLD });
-      page.drawText("Websites and adverts. You pay per genuine enquiry.", { x: W - M - reg.widthOfTextAtSize("Websites and adverts. You pay per genuine enquiry.", 8.5), y: H - 36, size: 8.5, font: reg, color: MIST });
+      page.drawText("AI-driven websites and adverts for service businesses.", { x: W - M - reg.widthOfTextAtSize("AI-driven websites and adverts for service businesses.", 8.5), y: H - 36, size: 8.5, font: reg, color: MIST });
       rect(M, 46, W - M * 2, 0.6, rgb(0.2, 0.25, 0.4));
       page.drawText("Proposal for", { x: M, y: H - 70, size: 10, font: reg, color: MIST });
       page.drawText(clip(name, serif, 28, CW), { x: M, y: H - 98, size: 28, font: serif, color: WHITE });
@@ -374,44 +374,81 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     });
   }
 
-  /* ---------------- page 3: benefits and value ---------------- */
+  /* ---------------- page 3: how the AI works, and what it could be worth ---------------- */
   header(false);
   rect(M, y + 1, 4, 13, GOLD);
-  text("What you get", M + 11, y, 14.5, serif, MIDNIGHT);
+  text("How our AI works for you, every week", M + 11, y, 14.5, serif, MIDNIGHT);
   y += 19;
   rect(M, y, CW, 1, RULE);
-  y += 10;
-  const cols = [128, 200, CW - 128 - 200];
-  rect(M, y, CW, 17, MIDNIGHT);
-  ["What you get", "Why it matters", "What it means for you"].forEach((h, i) => text(h, M + 8 + (i === 0 ? 0 : cols.slice(0, i).reduce((a, b) => a + b, 0)), y + 4.5, 8.5, bold, WHITE));
-  y += 17;
-  (pr.benefits || []).forEach((b, i) => {
-    const size = 8.5;
-    const l1 = wrap(b.title, bold, size + 0.5, cols[0] - 14);
-    const l2 = wrap(b.why, reg, size, cols[1] - 14);
-    const l3 = wrap(b.value, reg, size, cols[2] - 12);
-    const h = Math.max(l1.length, l2.length, l3.length) * size * 1.3 + 9;
-    need(h);
-    rect(M, y + h - 0.6, CW, 0.6, RULE);
-    l1.forEach((l, k) => text(l, M + 8, y + 4.5 + k * (size + 0.5) * 1.3, size + 0.5, bold, INK));
-    l2.forEach((l, k) => text(l, M + cols[0] + 6, y + 4.5 + k * size * 1.3, size, reg, INK));
-    l3.forEach((l, k) => text(l, M + cols[0] + cols[1] + 6, y + 4.5 + k * size * 1.3, size, reg, INK));
-    y += h;
+  y += 12;
+  y += textIn("We build and run websites and adverts for local service businesses, with AI doing the reading and a person making the decisions. This is the loop that runs on your account.", M, y, CW, 10, reg, SLATE, 1.35) + 10;
+  const loop = [
+    ["Track", "Every call and form is logged against the advert that caused it."],
+    ["Read", "Each Monday our AI reads the last seven days of spend, enquiries and spam."],
+    ["Recommend", "It flags what to stop, what to fund and what to change on the site."],
+    ["Check and act", "A person reviews every recommendation before anything changes."],
+  ];
+  const lw4 = (CW - 3 * 22) / 4;
+  const lh = Math.max(...loop.map(([t, d]) => 30 + wrap(d, reg, 8.5, lw4 - 20).length * 11.5)) + 10;
+  need(lh + 20);
+  loop.forEach(([t, d], i) => {
+    const x = M + i * (lw4 + 22);
+    rect(x, y, lw4, lh, i === 3 ? MIDNIGHT : WHITE, MIDNIGHT);
+    rect(x, y, lw4, 4, GOLD);
+    text(t, x + 10, y + 13, 12, serif, i === 3 ? WHITE : MIDNIGHT);
+    textIn(d, x + 10, y + 31, lw4 - 20, 8.5, reg, i === 3 ? MIST : SLATE, 1.35);
+    if (i < 3) {
+      const ax = x + lw4 + 4, ay = top(y + lh / 2);
+      page.drawLine({ start: { x: ax, y: ay }, end: { x: ax + 12, y: ay }, thickness: 1.6, color: GOLD });
+      page.drawLine({ start: { x: ax + 8, y: ay + 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
+      page.drawLine({ start: { x: ax + 8, y: ay - 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
+    }
   });
-  y += 14;
+  y += lh + 6;
+  para("The loop repeats every week, so your adverts and website keep improving instead of staying as they were on launch day.", { size: 9, color: SLATE, gap: 8 });
 
   const v = pr.value_example;
   if (v) {
-    need(90);
-    rect(M, y, CW, 76, WHITE, MIDNIGHT);
-    rect(M, y, 4, 76, GOLD);
-    text("What it could be worth: an example", M + 16, y + 9, 12, serif, MIDNIGHT);
-    textIn(`Say your new website and adverts bring in ${v.enquiries} genuine enquiries a month. If 1 in ${v.one_in} turns into a ${v.job} worth ${money(v.job_value)}, that is ${v.jobs} jobs and ${money(v.total)} of work a month.`, M + 16, y + 26, CW - 32, 9.5, reg, INK, 1.35);
-    textIn("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", M + 16, y + 56, CW - 32, 8, reg, SLATE);
-    y += 88;
+    heading("What it could be worth: an example");
+    const sw = (CW - 2 * 26) / 3;
+    const stats = [
+      [String(v.enquiries), "genuine enquiries a month"],
+      [String(v.jobs), `jobs won, 1 in ${v.one_in} enquiries`],
+      [money(v.total), `of work a month at ${money(v.job_value)} a ${v.job}`],
+    ];
+    need(96);
+    stats.forEach(([big, small], i) => {
+      const x = M + i * (sw + 26);
+      rect(x, y, sw, 62, i === 2 ? MIDNIGHT : WHITE, MIDNIGHT);
+      rect(x, y, 4, 62, GOLD);
+      text(big, x + 16, y + 9, 26, serif, i === 2 ? GOLD : MIDNIGHT);
+      textIn(small, x + 16, y + 42, sw - 24, 8.5, reg, i === 2 ? WHITE : SLATE, 1.25);
+      if (i < 2) {
+        const ax = x + sw + 6, ay = top(y + 31);
+        page.drawLine({ start: { x: ax, y: ay }, end: { x: ax + 12, y: ay }, thickness: 1.6, color: GOLD });
+        page.drawLine({ start: { x: ax + 8, y: ay + 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
+        page.drawLine({ start: { x: ax + 8, y: ay - 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
+      }
+    });
+    y += 70;
+    para("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", { size: 8, color: SLATE, gap: 6 });
   }
 
   if (!bringOnPage1) drawBringCompact();
+
+  if ((pr.benefits || []).length) {
+    heading("Built into every site we make");
+    const bh = pr.benefits.slice(0, 6);
+    const hw2 = (CW - 16) / 2;
+    bh.forEach((b, i) => {
+      const x = M + (i % 2) * (hw2 + 16), yy = y + (i >> 1) * 36;
+      need(0);
+      rect(x, yy + 1, 8, 8, GOLD);
+      text(clip(b.title, bold, 9.5, hw2 - 18), x + 15, yy, 9.5, bold, INK);
+      textIn(b.value, x + 15, yy + 12, hw2 - 18, 8.5, reg, SLATE, 1.25);
+    });
+    y += Math.ceil(bh.length / 2) * 36 + 4;
+  }
 
   heading("What it costs, and what happens next");
   para(pr.offer, { gap: 6 });
