@@ -24,6 +24,7 @@ import { cleanRankings, checkRankings, searchesFor, googleSearchUrl, ensureRich,
 import { runWeeklyReviews, reviewClient } from "../lib/ad-review.mjs";
 import { addDays, mondayOf } from "../lib/util.mjs";
 import { buildProposalPdf } from "../lib/pdf.mjs";
+import { fetchScreenshots } from "../lib/screenshot.mjs";
 import { syncMeta, draftWeeklyReports, attentionItems, sendAttentionEmail, notifyReportPublished, sendMetaConversions } from "../lib/jobs.mjs";
 
 export const config = { path: "/api/*" };
@@ -656,7 +657,8 @@ async function admin(req, db, p, method) {
     const [row] = await db.sql`SELECT name, website, niche, phone, audit, rankings, proposition FROM prospects WHERE id = ${toInt(p[1], { min: 1 })}`;
     if (!row?.proposition) return fail(404, "Not found.");
     const niche = nicheFor(row.niche) || { label: row.niche, job: "new enquiries" };
-    const bytes = await buildProposalPdf({ name: row.name, website: row.website, audit: row.audit, rankings: row.rankings, phone: row.phone ? (row.phone.startsWith("+44") ? "0" + row.phone.slice(3) : row.phone) : "", proposition: ensureRich(row.proposition, row, row.audit, niche), contact: Netlify.env.get("PROPOSAL_CONTACT") || "" });
+    const screenshots = new URL(req.url).searchParams.get("shots") === "0" ? {} : await fetchScreenshots(row.website, { timeoutMs: 8000, apiKey: Netlify.env.get("MICROLINK_API_KEY") || "" });
+    const bytes = await buildProposalPdf({ screenshots, name: row.name, website: row.website, audit: row.audit, rankings: row.rankings, phone: row.phone ? (row.phone.startsWith("+44") ? "0" + row.phone.slice(3) : row.phone) : "", proposition: ensureRich(row.proposition, row, row.audit, niche), contact: Netlify.env.get("PROPOSAL_CONTACT") || "" });
     const file = "proposal-" + (slugify(row.name) || "business") + ".pdf";
     return new Response(bytes, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${file}"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
   }

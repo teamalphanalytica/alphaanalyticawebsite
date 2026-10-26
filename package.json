@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test netlify/lib/util.test.mjs netlify/lib/billing.test.mjs netlify/lib/calls.test.mjs netlify/lib/prospects.test.mjs netlify/lib/ad-review.test.mjs netlify/lib/writing.test.mjs",
+    "test": "node --test netlify/lib/util.test.mjs netlify/lib/billing.test.mjs netlify/lib/calls.test.mjs netlify/lib/prospects.test.mjs netlify/lib/ad-review.test.mjs netlify/lib/writing.test.mjs netlify/lib/screenshot.test.mjs",
     "test:db": "node --import ./tests/db/register.mjs --test tests/db/conversions.test.mjs tests/db/prospects.test.mjs"
   },
   "dependencies": {

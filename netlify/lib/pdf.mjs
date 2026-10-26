@@ -1,6 +1,7 @@
 // The proposal PDF: a scorecard, a drawn mock-up of the new website (desktop and phone), the benefits and why they matter,
 // a worked example of what it could be worth, how you pay, and the next step. Built in code: no fonts, images or files needed.
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { imageType } from "./screenshot.mjs";
 
 const MIDNIGHT = rgb(0.039, 0.067, 0.157);
 const GOLD = rgb(1, 0.718, 0.012);
@@ -65,11 +66,21 @@ export function scoreRows(audit, extras = {}) {
   ];
 }
 
-export async function buildProposalPdf({ name, website, proposition: pr, audit, rankings = [], rankingsSource = "Google", phone = "", date = new Date(), contact = "" }) {
+export async function buildProposalPdf({ name, website, proposition: pr, audit, rankings = [], rankingsSource = "Google", phone = "", date = new Date(), contact = "", screenshots = {} }) {
   const doc = await PDFDocument.create();
   const reg = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const serif = await doc.embedFont(StandardFonts.TimesRomanBold);
+  const embedImg = async (bytes) => {
+    try {
+      const t = imageType(bytes);
+      return t === "png" ? await doc.embedPng(bytes) : t === "jpg" ? await doc.embedJpg(bytes) : null;
+    } catch { return null; }
+  };
+  const shotD = await embedImg(screenshots.desktop);
+  const shotM = await embedImg(screenshots.mobile);
+  const hasShots = !!(shotD || shotM);
+  const SHOT_H = 182;
   const W = 595.28, H = 841.89, M = 44, CW = W - M * 2;
   let page, y;
 
@@ -223,7 +234,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const p1Need = (() => {
     const fh = (pr.findings || []).reduce((a, f) => a + wrap(f.title, bold, 10.5, CW - 12).length * 14.2 + 1 + wrap(f.detail, reg, 10.5, CW - 12).length * 14.2 + 8, 0);
     const rk = (rankings || []).some((r) => r.bucket && r.bucket !== "unknown") ? 170 : 0;
-    return 42 + 35 + Math.ceil(scoreRows(audit).filter((r) => r[1] === false).length / 2) * 24 + 20 + rk + 35 + fh;
+    return (hasShots ? SHOT_H + 60 : 42 + 35 + Math.ceil(scoreRows(audit).filter((r) => r[1] === false).length / 2) * 24 + 20) + rk + 35 + fh;
   })();
   const valueOnPage1 = y + 130 + p1Need < H - 62;
   if (valueOnPage1) drawValue();
@@ -236,7 +247,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   }
 
   const missing = scoreRows(audit).filter((r) => r[1] === false);
-  if (missing.length) {
+  if (missing.length && !hasShots) {
     heading("What your website is missing");
     const colW = CW / 2;
     missing.forEach((r, i) => {
@@ -274,9 +285,43 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     para(`What a local customer sees when they search. Checked ${when}. Results vary a little by location and device.`, { size: 8.5, color: SLATE, gap: 6 });
   }
 
+  if (hasShots) {
+    heading("Your website today");
+    const T0 = y;
+    const imgIn = (img, x, t, w, h) => {
+      const sc = Math.min(w / img.width, h / img.height);
+      const dw = img.width * sc, dh = img.height * sc;
+      page.drawImage(img, { x: x + (w - dw) / 2, y: top(t) - dh, width: dw, height: dh });
+      return dh;
+    };
+    let dx = M;
+    if (shotD) {
+      const dw = shotM ? CW - 130 : CW;
+      const dh = Math.min(SHOT_H - 16, dw * (shotD.height / shotD.width));
+      rect(dx, T0, dw, 14, rgb(0.93, 0.94, 0.97), RULE);
+      [0, 1, 2].forEach((i) => page.drawCircle({ x: dx + 9 + i * 8, y: top(T0 + 7), size: 2.2, color: GREY }));
+      text(clip((website || "").replace(/^https?:\/\//, "").replace(/\/$/, ""), reg, 6.5, dw - 60), dx + 40, T0 + 4, 6.5, reg, SLATE);
+      rect(dx, T0 + 14, dw, dh, WHITE, RULE);
+      imgIn(shotD, dx, T0 + 14, dw, dh);
+      text("On a computer", dx, T0 + 14 + dh + 5, 8, bold, SLATE);
+      y = Math.max(y, T0 + 14 + dh + 18);
+      dx += dw + 16;
+    }
+    if (shotM) {
+      const mw = shotD ? 114 : 140, mh = SHOT_H - 14;
+      rect(dx, T0, mw, mh, MIDNIGHT);
+      const ih = imgIn(shotM, dx + 4, T0 + 8, mw - 8, mh - 16);
+      text("On a phone", dx, T0 + mh + 5, 8, bold, SLATE);
+      y = Math.max(y, T0 + mh + 18);
+    }
+    para(`Captured ${whenText}. This is what a customer sees first, before they scroll.`, { size: 8.5, color: SLATE, gap: 6 });
+  }
+
   heading("What we found");
   for (const f of pr.findings) {
-    need(56);
+    // Page 1 holds the findings; any that would spill over are left out (they are in order of importance).
+    const fh = wrap(f.title, bold, 10.5, CW - 12).length * 14.2 + wrap(f.detail, reg, 10.5, CW - 12).length * 14.2 + 9;
+    if (y + fh > H - 62) break;
     rect(M, y + 1, 3, 13, GOLD);
     para(f.title, { font: bold, indent: 12, gap: 1 });
     para(f.detail, { indent: 12, color: SLATE, gap: 8 });
