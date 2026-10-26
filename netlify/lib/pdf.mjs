@@ -86,15 +86,19 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   const header = (first) => {
     page = doc.addPage([W, H]);
     if (first) {
-      rect(0, 0, W, 118, MIDNIGHT);
-      rect(0, 118, W, 3, GOLD);
+      const hl = wrap(pr.headline || "", serif, 25, CW - 20);
+      const bandH = 128 + hl.length * 29 + 18;
+      rect(0, 0, W, bandH, MIDNIGHT);
+      rect(0, bandH, W, 4, GOLD);
       page.drawText("Alpha Analytica", { x: M, y: H - 38, size: 12, font: serif, color: GOLD });
       page.drawText("AI-driven websites and adverts for service businesses.", { x: W - M - reg.widthOfTextAtSize("AI-driven websites and adverts for service businesses.", 8.5), y: H - 36, size: 8.5, font: reg, color: MIST });
       rect(M, 46, W - M * 2, 0.6, rgb(0.2, 0.25, 0.4));
       page.drawText("Proposal for", { x: M, y: H - 70, size: 10, font: reg, color: MIST });
-      page.drawText(clip(name, serif, 28, CW), { x: M, y: H - 98, size: 28, font: serif, color: WHITE });
+      page.drawText(clip(name, bold, 13, CW - 120), { x: M, y: H - 88, size: 13, font: bold, color: WHITE });
       page.drawText(whenText, { x: W - M - reg.widthOfTextAtSize(whenText, 10), y: H - 70, size: 10, font: reg, color: MIST });
-      y = 121 + 26;
+      rect(M, 104, 40, 3, GOLD);
+      hl.forEach((l, i) => page.drawText(l, { x: M, y: H - 120 - 25 - i * 29, size: 25, font: serif, color: WHITE }));
+      y = bandH + 4 + 22;
     } else {
       rect(0, 0, W, 14, MIDNIGHT);
       y = 14 + 30;
@@ -187,25 +191,49 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
 
   /* ---------------- page 1: where you stand ---------------- */
   header(true);
-  para(pr.headline, { size: 22, font: serif, color: MIDNIGHT, gap: 6, lead: 1.22 });
-  const sv = pr.short_version;
-  if (sv) {
-    const rows2 = [["What we found", sv.found], ["What we'd do", sv.plan], ["What it costs", sv.cost]];
-    const lw = 78, tw = CW - lw - 28;
-    const hs = rows2.map(([, t]) => Math.max(1, wrap(t, reg, 10, tw).length) * 13 + 8);
-    const total = hs.reduce((a, b) => a + b, 0) + 22;
-    need(total + 10);
-    rect(M, y, CW, total, MIDNIGHT);
-    rect(M, y, 4, total, GOLD);
-    text("In short", M + 16, y + 7, 9.5, bold, GOLD);
-    let ry = y + 24;
-    rows2.forEach(([l, t], i) => {
-      text(l, M + 16, ry, 9.5, bold, WHITE);
-      textIn(t, M + 16 + lw, ry, tw, 10, reg, MIST, 1.3);
-      ry += hs[i];
+  const drawValue = () => {
+    const v = pr.value_example;
+    if (!v) return;
+    heading("What this could be worth to you");
+    const sw = (CW - 2 * 26) / 3;
+    const stats = [
+      [String(v.enquiries), "genuine enquiries a month"],
+      [String(v.jobs), `jobs won, 1 in ${v.one_in} enquiries`],
+      [money(v.total), `of work a month at ${money(v.job_value)} a ${v.job}`],
+    ];
+    need(100);
+    stats.forEach(([big, small], i) => {
+      const x = M + i * (sw + 26);
+      rect(x, y, sw, 68, i === 2 ? MIDNIGHT : WHITE, MIDNIGHT);
+      rect(x, y, 4, 68, GOLD);
+      text(big, x + 16, y + 9, 26, serif, i === 2 ? GOLD : MIDNIGHT);
+      textIn(small, x + 16, y + 42, sw - 24, 8.5, reg, i === 2 ? WHITE : SLATE, 1.25);
+      if (i < 2) {
+        const ax = x + sw + 6, ay = top(y + 31);
+        page.drawLine({ start: { x: ax, y: ay }, end: { x: ax + 12, y: ay }, thickness: 1.6, color: GOLD });
+        page.drawLine({ start: { x: ax + 8, y: ay + 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
+        page.drawLine({ start: { x: ax + 8, y: ay - 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
+      }
     });
-    y += total + 10;
-  } else para(pr.summary, { size: 11, color: SLATE, gap: 6 });
+    y += 76;
+    para("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", { size: 8, color: SLATE, gap: 6 });
+  };
+
+  // Does everything fit on page 1? If not, the worked example moves to page 3.
+  const p1Need = (() => {
+    const fh = (pr.findings || []).reduce((a, f) => a + wrap(f.title, bold, 10.5, CW - 12).length * 14.2 + 1 + wrap(f.detail, reg, 10.5, CW - 12).length * 14.2 + 8, 0);
+    const rk = (rankings || []).some((r) => r.bucket && r.bucket !== "unknown") ? 170 : 0;
+    return 42 + 35 + Math.ceil(scoreRows(audit).length / 2) * 24 + 20 + rk + 35 + fh;
+  })();
+  const valueOnPage1 = y + 130 + p1Need < H - 62;
+  if (valueOnPage1) drawValue();
+  {
+    const ph2 = 34;
+    rect(M, y, CW, ph2, GOLD);
+    text("No retainer. You pay only for genuine enquiries.", M + 14, y + 7, 11, bold, MIDNIGHT);
+    text("Spam, sales calls and wrong numbers are free. Every enquiry is logged so you can check.", M + 14, y + 22, 8, reg, MIDNIGHT);
+    y += ph2 + 8;
+  }
 
   heading("How your website is doing today");
   const rows = scoreRows(audit);
@@ -407,36 +435,11 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
   y += lh + 6;
   para("The loop repeats every week, so your adverts and website keep improving instead of staying as they were on launch day.", { size: 9, color: SLATE, gap: 8 });
 
-  const v = pr.value_example;
-  if (v) {
-    heading("What it could be worth: an example");
-    const sw = (CW - 2 * 26) / 3;
-    const stats = [
-      [String(v.enquiries), "genuine enquiries a month"],
-      [String(v.jobs), `jobs won, 1 in ${v.one_in} enquiries`],
-      [money(v.total), `of work a month at ${money(v.job_value)} a ${v.job}`],
-    ];
-    need(96);
-    stats.forEach(([big, small], i) => {
-      const x = M + i * (sw + 26);
-      rect(x, y, sw, 62, i === 2 ? MIDNIGHT : WHITE, MIDNIGHT);
-      rect(x, y, 4, 62, GOLD);
-      text(big, x + 16, y + 9, 26, serif, i === 2 ? GOLD : MIDNIGHT);
-      textIn(small, x + 16, y + 42, sw - 24, 8.5, reg, i === 2 ? WHITE : SLATE, 1.25);
-      if (i < 2) {
-        const ax = x + sw + 6, ay = top(y + 31);
-        page.drawLine({ start: { x: ax, y: ay }, end: { x: ax + 12, y: ay }, thickness: 1.6, color: GOLD });
-        page.drawLine({ start: { x: ax + 8, y: ay + 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
-        page.drawLine({ start: { x: ax + 8, y: ay - 3.5 }, end: { x: ax + 13, y: ay }, thickness: 1.6, color: GOLD });
-      }
-    });
-    y += 70;
-    para("Illustrative numbers to show how it adds up. They are not a forecast or a promise. On our call we use your own figures.", { size: 8, color: SLATE, gap: 6 });
-  }
+  if (!valueOnPage1) drawValue();
+  const room = () => H - 62 - y - 205;
+  if (!bringOnPage1) { if (bringHeight().total < room()) drawBring(); else drawBringCompact(); }
 
-  if (!bringOnPage1) drawBringCompact();
-
-  if (bringOnPage1 && (pr.benefits || []).length) {
+  if ((pr.benefits || []).length && Math.ceil(Math.min(6, pr.benefits.length) / 2) * 36 + 40 < room()) {
     heading("Built into every site we make");
     const bh = pr.benefits.slice(0, 6);
     const hw2 = (CW - 16) / 2;
