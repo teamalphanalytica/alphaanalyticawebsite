@@ -436,7 +436,7 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
 
   if (!bringOnPage1) drawBringCompact();
 
-  if ((pr.benefits || []).length) {
+  if (bringOnPage1 && (pr.benefits || []).length) {
     heading("Built into every site we make");
     const bh = pr.benefits.slice(0, 6);
     const hw2 = (CW - 16) / 2;
