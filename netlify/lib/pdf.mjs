@@ -296,8 +296,9 @@ export async function buildProposalPdf({ name, website, proposition: pr, audit, 
     };
     let dx = M;
     if (shotD) {
-      const dw = shotM ? CW - 130 : CW;
-      const dh = Math.min(SHOT_H - 16, dw * (shotD.height / shotD.width));
+      const ratio = shotD.height / shotD.width;
+      const dw = Math.min(shotM ? CW - 130 : CW, (SHOT_H - 16) / ratio);
+      const dh = dw * ratio;
       rect(dx, T0, dw, 14, rgb(0.93, 0.94, 0.97), RULE);
       [0, 1, 2].forEach((i) => page.drawCircle({ x: dx + 9 + i * 8, y: top(T0 + 7), size: 2.2, color: GREY }));
       text(clip((website || "").replace(/^https?:\/\//, "").replace(/\/$/, ""), reg, 6.5, dw - 60), dx + 40, T0 + 4, 6.5, reg, SLATE);
